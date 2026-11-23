@@ -244,6 +244,7 @@ static bool localTime(tm& t) { return timeValid() && getLocalTime(&t, 0); }
 // ---------- Notificaciones (las manda un recordatorio o el teléfono) ----------
 std::vector<String> pendingNotes;
 TypeBox noteBox;
+int rupees = 0;  // se ganan atendiendo avisos (se guardan)
 uint32_t noteChimeAt = 0;
 int noteChimes = 0;
 
@@ -267,6 +268,10 @@ static void updateNotify(uint32_t now) {
     music.play(&SONG_HEY);
   }
   if (btnOk.shortRel && noteBox.ok()) {
+    // Atender un aviso da una rupia
+    rupees = min(rupees + 1, 999);
+    prefs.putUShort("rupees", rupees);
+    music.play(&SONG_HEART);
     if (!pendingNotes.empty()) startNextNotification(now);
     else enterScene(SC_CLOCK);
   }
@@ -286,7 +291,7 @@ static void drawNotify(uint32_t now) {
   noteBox.draw(6, 27, 11, now);
 }
 
-// ---------- Reloj ----------
+// ---------- Reloj de Hyrule ----------
 static const char* const DAYS[] = {"dom", "lun", "mar", "mié", "jue", "vie", "sáb"};
 static const char* const MONTHS[] = {"ene", "feb", "mar", "abr", "may", "jun",
                                      "jul", "ago", "sep", "oct", "nov", "dic"};
@@ -299,36 +304,56 @@ static const char* const SPR_BELL[] = {
   "#######",
   "...#...",
 };
-static const int STARS[][2] = {{5, 3},  {19, 9},  {33, 2},  {47, 7},  {61, 3},
-                               {75, 10}, {89, 4}, {103, 8}, {117, 2}, {124, 11}};
+static const char* const SPR_RUPEE_S[] = {
+  "..#..", ".###.", "#.#.#", "#.#.#", "#.#.#", "#.#.#", ".###.", "..#..",
+};
+static const int NIGHT_STARS[][2] = {{8, 19}, {14, 33}, {7, 43}, {119, 18}, {113, 30}, {120, 42}};
 int lastChimeHour = -1;
+uint32_t fairyFlyStart = 0;
+const uint32_t FAIRY_FLY_MS = 4000, FAIRY_EVERY_MS = 180000;
 
-static void drawSun(int x, int y, uint32_t now) {
-  u8g2.drawDisc(x, y, 3);
-  float a0 = (now % 4000) / 4000.0f * PI / 2;
+static const char* dayPhase(int h) {
+  if (h < 5) return "Noche";
+  if (h < 7) return "Amanecer";
+  if (h < 12) return "Mañana";
+  if (h < 14) return "Mediodía";
+  if (h < 19) return "Tarde";
+  if (h < 21) return "Atardecer";
+  return "Noche";
+}
+
+static void drawSunSmall(int x, int y, uint32_t now) {
+  u8g2.drawDisc(x, y, 2);
+  float a0 = ((now / 500) % 2) ? PI / 4 : 0;
   for (int k = 0; k < 4; k++) {
     float a = a0 + k * PI / 2;
-    u8g2.drawLine(x + cosf(a) * 5, y + sinf(a) * 5, x + cosf(a) * 7, y + sinf(a) * 7);
+    u8g2.drawLine(x + cosf(a) * 4, y + sinf(a) * 4, x + cosf(a) * 5, y + sinf(a) * 5);
   }
 }
 
-static void drawMoon(int x, int y) {
-  u8g2.drawDisc(x, y, 4);
+static void drawMoonSmall(int x, int y) {
+  u8g2.drawDisc(x, y, 3);
   u8g2.setDrawColor(0);
-  u8g2.drawDisc(x + 2, y - 1, 3);
+  u8g2.drawDisc(x + 2, y - 1, 2);
   u8g2.setDrawColor(1);
 }
 
-static void drawCloud(int x, int y) {
-  u8g2.drawDisc(x, y, 3);
-  u8g2.drawDisc(x + 4, y - 2, 4);
-  u8g2.drawDisc(x + 9, y, 3);
-  u8g2.drawHLine(x, y + 3, 10);
+// Corazón: 0 vacío, 1 medio, 2 lleno
+static void drawHeart(int x, int y, int fill) {
+  drawSprite(x, y, SPR_HEART_EMPTY, 8);
+  if (fill == 2) {
+    drawSprite(x, y, SPR_HEART, 8);
+  } else if (fill == 1) {
+    for (int r = 0; r < 8; r++)
+      for (int c = 0; c <= 4; c++)
+        if (SPR_HEART[r][c] == '#') u8g2.drawPixel(x + c, y + r);
+  }
 }
 
 static void updateClock(uint32_t now) {
-  if (btnOk.shortRel) enterScene(SC_MENU);
-  if (btnNext.shortRel) enterScene(SC_REMINDERS);
+  // Cualquier botón abre el menú
+  if (btnOk.shortRel || btnNext.shortRel || btnPrev.shortRel) enterScene(SC_MENU);
+  if (now - fairyFlyStart > FAIRY_EVERY_MS) fairyFlyStart = now;
 #if HOURLY_CHIME
   tm t;
   if (localTime(t) && t.tm_min == 0 && t.tm_hour != lastChimeHour) {
@@ -354,40 +379,45 @@ static void drawClock(uint32_t now) {
     return;
   }
 
-  // Cielo: sol de 7 a 20, luna y estrellas de noche.
-  float hf = t.tm_hour + t.tm_min / 60.0f;
-  bool day = hf >= 7 && hf < 20;
-  float p = day ? (hf - 7) / 13.0f : fmodf(hf - 20 + 24, 24) / 11.0f;
-  int sx = 6 + (int)(p * 116);
-  int sy = 13 - (int)(sinf(p * PI) * 9);
-  if (day) {
-    drawCloud((int)((now / 180) % 170) - 20, 9);
-    drawCloud((int)((now / 260 + 90) % 170) - 20, 5);
-    u8g2.setDrawColor(0);
-    u8g2.drawDisc(sx, sy, 8);
-    u8g2.setDrawColor(1);
-    drawSun(sx, sy, now);
-  } else {
-    for (int i = 0; i < 10; i++)
-      if (((now / 600) + i * 3) % 7) u8g2.drawPixel(STARS[i][0], STARS[i][1]);
-    drawMoon(sx, sy);
-  }
+  // HUD superior: la vida del día se vacía a medida que pasan las horas
+  // (10 corazones = 24 h, cada medio corazón ~72 min) + contador de rupias.
+  int minsLeft = 1440 - (t.tm_hour * 60 + t.tm_min);
+  int halves = (minsLeft + 71) / 72;
+  for (int i = 0; i < 10; i++) drawHeart(i * 10, 0, constrain(halves - 2 * i, 0, 2));
+  drawSprite(103, 0, SPR_RUPEE_S, 8);
+  char rs[4];
+  snprintf(rs, sizeof(rs), "%03d", rupees);
+  u8g2.setFont(u8g2_font_5x7_tf);
+  u8g2.drawStr(110, 7, rs);
 
-  // Hora grande con los dos puntos titilando
+  // Marco doble, como las cajas de diálogo
+  u8g2.drawRFrame(0, 11, 128, 40, 4);
+  u8g2.drawRFrame(2, 13, 124, 36, 3);
+
+  bool day = t.tm_hour >= 7 && t.tm_hour < 19;
+  if (!day)
+    for (int i = 0; i < 6; i++)
+      if (((now / 500) + i * 2) % 5) u8g2.drawPixel(NIGHT_STARS[i][0], NIGHT_STARS[i][1]);
+
+  // Hora con la Trifuerza como separador; un destello recorre sus puntas
   char hh[3], mm[3];
   snprintf(hh, sizeof(hh), "%02d", t.tm_hour);
   snprintf(mm, sizeof(mm), "%02d", t.tm_min);
-  u8g2.setFont(u8g2_font_logisoso24_tn);
-  int wh = u8g2.getStrWidth(hh);
-  u8g2.drawStr(58 - wh, 46, hh);
-  if (t.tm_sec % 2 == 0) u8g2.drawStr(60, 44, ":");
-  u8g2.drawStr(70, 46, mm);
+  u8g2.setFont(u8g2_font_ncenB24_tn);
+  u8g2.drawStr(50 - u8g2.getStrWidth(hh), 43, hh);
+  u8g2.drawStr(78, 43, mm);
+  drawTriforce(64, 21, 10);
+  static const int TIPS[3][2] = {{64, 18}, {52, 42}, {76, 42}};
+  const int* tip = TIPS[t.tm_sec % 3];
+  drawSparkle(tip[0], tip[1], 2);
 
-  // Abajo: fecha y próximo recordatorio
+  // Abajo: sol/luna + momento del día (alterna con la fecha) y próximo aviso
+  if (day) drawSunSmall(4, 58, now);
+  else drawMoonSmall(4, 58);
   u8g2.setFont(u8g2_font_6x10_tf);
   char date[24];
   snprintf(date, sizeof(date), "%s %d %s", DAYS[t.tm_wday], t.tm_mday, MONTHS[t.tm_mon]);
-  u8g2.drawUTF8(0, 63, date);
+  u8g2.drawUTF8(11, 63, (t.tm_sec / 5) % 2 ? date : dayPhase(t.tm_hour));
 
   int idx[MAX_REMINDERS];
   if (reminders.sorted(t, idx) > 0) {
@@ -396,16 +426,30 @@ static void drawClock(uint32_t now) {
     snprintf(hm, sizeof(hm), "%02d:%02d", r.hour, r.minute);
     int w = u8g2.getStrWidth(hm);
     u8g2.drawStr(128 - w, 63, hm);
-    drawSprite(128 - w - 10, 55, SPR_BELL, 7);
+    drawSprite(128 - w - 9, 55, SPR_BELL, 7);
   }
   if (music.muted()) {
-    u8g2.drawLine(121, 1, 126, 6);
-    u8g2.drawLine(121, 6, 126, 1);
+    u8g2.drawLine(78, 56, 82, 60);
+    u8g2.drawLine(78, 60, 82, 56);
+  }
+
+  // Cada tanto un hada cruza la pantalla dejando brillos
+  uint32_t ft = now - fairyFlyStart;
+  if (ft < FAIRY_FLY_MS) {
+    float p = ft / (float)FAIRY_FLY_MS;
+    int fx = -10 + (int)(p * 148);
+    int fy = 31 + (int)(12 * sinf(p * PI * 3));
+    for (int k = 1; k <= 5; k++)
+      if (random(3)) u8g2.drawPixel(fx - k * 5, fy + random(-2, 3));
+    u8g2.setDrawColor(0);
+    u8g2.drawDisc(fx, fy, 7);
+    u8g2.setDrawColor(1);
+    drawFairyAt(fx, fy, now);
   }
 }
 
-// ---------- Arranque: la Trifuerza se arma + título ----------
-const uint32_t BOOT_FLY = 1800, BOOT_FLASH = 700, BOOT_TITLE = 4500;
+// ---------- Arranque: la Trifuerza se arma y destella ----------
+const uint32_t BOOT_FLY = 1800, BOOT_FLASH = 700, BOOT_HOLD = 1200;
 bool bootChime = false;
 
 static void updateBoot(uint32_t now, uint32_t t) {
@@ -413,34 +457,20 @@ static void updateBoot(uint32_t now, uint32_t t) {
     bootChime = true;
     music.play(&SONG_SECRET);
   }
-  bool pressed = btnOk.shortRel || btnPrev.shortRel || btnNext.shortRel;
-  if ((t > BOOT_FLY && pressed) || t > BOOT_FLY + BOOT_FLASH + BOOT_TITLE) enterScene(SC_CLOCK);
+  if (t > BOOT_FLY + BOOT_FLASH + BOOT_HOLD) enterScene(SC_CLOCK);
 }
 
 static void drawBoot(uint32_t now, uint32_t t) {
-  if (t < BOOT_FLY + BOOT_FLASH) {
-    float e = easeOut((float)t / BOOT_FLY);
-    int dx[3] = {0, (int)(-90 * (1 - e)), (int)(90 * (1 - e))};
-    int dy[3] = {(int)(-70 * (1 - e)), (int)(40 * (1 - e)), (int)(40 * (1 - e))};
-    drawTriforce(64, 6, 26, dx, dy);
-    if (t > BOOT_FLY && ((t - BOOT_FLY) / 90) % 2 == 0) {
-      u8g2.setDrawColor(2);
-      u8g2.drawBox(0, 0, 128, 64);
-      u8g2.setDrawColor(1);
-    }
-    return;
+  float e = easeOut((float)t / BOOT_FLY);
+  int dx[3] = {0, (int)(-90 * (1 - e)), (int)(90 * (1 - e))};
+  int dy[3] = {(int)(-70 * (1 - e)), (int)(40 * (1 - e)), (int)(40 * (1 - e))};
+  drawTriforce(64, 6, 26, dx, dy);
+  if (t > BOOT_FLY && t < BOOT_FLY + BOOT_FLASH && ((t - BOOT_FLY) / 90) % 2 == 0) {
+    u8g2.setDrawColor(2);
+    u8g2.drawBox(0, 0, 128, 64);
+    u8g2.setDrawColor(1);
   }
-  uint32_t tt = t - BOOT_FLY - BOOT_FLASH;
-  drawTriforce(64, 1, 12);
-  drawSparkleField(tt);
-  if (tt > 300) {
-    u8g2.setFont(u8g2_font_ncenB10_tf);
-    centerText(40, GIFT_TITLE);
-  }
-  if (tt > 900) {
-    u8g2.setFont(u8g2_font_ncenB12_tf);
-    centerText(58, GIFT_NAME);
-  }
+  if (t > BOOT_FLY + BOOT_FLASH) drawSparkleField(t);
 }
 
 // ---------- Listas (menú, canciones, recordatorios) ----------
@@ -899,6 +929,7 @@ void enterScene(Scene s) {
       for (int i = 0; i < TRAIL; i++) trailX[i] = trailY[i] = -10;
       break;
     case SC_REMINDERS: refreshReminderList(); break;
+    case SC_CLOCK: fairyFlyStart = now; break;
     case SC_NOTIFY: startNextNotification(now); break;
     default: break;
   }
@@ -912,6 +943,7 @@ void setup() {
   music.begin(PIN_BUZZER);
   prefs.begin("zelda", false);
   music.setMuted(prefs.getBool("muted", false));
+  rupees = prefs.getUShort("rupees", 0);
   reminders.begin();
 
   u8g2.setBusClock(400000);
@@ -941,6 +973,10 @@ void loop() {
   btnOk.poll(now);
   btnNext.poll(now);
   if (btnPrev.press || btnOk.press || btnNext.press) lastInput = now;
+  // Registro por puerto serie para diagnosticar botones
+  if (btnPrev.press) Serial.printf("[btn] izquierda (pin %d) escena=%d\n", PIN_BTN_PREV, scene);
+  if (btnOk.press) Serial.printf("[btn] OK (pin %d) escena=%d\n", PIN_BTN_OK, scene);
+  if (btnNext.press) Serial.printf("[btn] derecha (pin %d) escena=%d\n", PIN_BTN_NEXT, scene);
 
   // Mantener izquierda = silenciar / activar sonido (se guarda)
   if (btnPrev.longPress) {

@@ -4,16 +4,12 @@
 //  PERSONALIZÁ TU REGALO ACÁ
 // =====================================================================
 
-// Pantalla de título (después de la animación de la Trifuerza)
-#define GIFT_TITLE      "¡Feliz cumple!"
-#define GIFT_NAME       "Héroe"            // <- poné el nombre de la persona
-
 // Mensaje que aparece al abrir el cofre.
 // Se acomoda solo en la caja de texto; usá \n para forzar un salto de línea.
 // Si es largo se divide en varias páginas (OK pasa de página).
-#define CHEST_MESSAGE   "¡Encontraste un regalo!\n" \
-                        "Que este año esté lleno de aventuras, cofres y rupias. " \
-                        "¡Feliz cumpleaños!"
+#define CHEST_MESSAGE   "¡Encontraste una rupia verde!\n" \
+                        "Es poco, pero todo héroe empieza así. " \
+                        "Seguí explorando."
 
 // Pantalla de corazones
 #define HEARTS_COUNT    20                 // máximo 20 (dos filas de 10)
