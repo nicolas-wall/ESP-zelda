@@ -1,6 +1,7 @@
 // Cofre de Hyrule — un regalo para fans de Zelda
 // XIAO ESP32-S3 + OLED 128x64 I2C + buzzer pasivo + 3 botones
 
+#ifndef PINFINDER
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>
@@ -31,10 +32,10 @@ struct Button {
   bool press = false, shortRel = false, longPress = false;  // eventos de este frame
 
   explicit Button(uint8_t p) : pin(p) {}
-  void begin() { pinMode(pin, INPUT_PULLUP); }
+  void begin() { pinMode(pin, BTN_TO_GND ? INPUT_PULLUP : INPUT_PULLDOWN); }
   void poll(uint32_t now) {
     press = shortRel = longPress = false;
-    bool raw = digitalRead(pin) == LOW;
+    bool raw = digitalRead(pin) == (BTN_TO_GND ? LOW : HIGH);
     if (raw != down && now - changed > 25) {
       changed = now;
       down = raw;
@@ -693,3 +694,4 @@ void loop() {
   }
   u8g2.sendBuffer();
 }
+#endif  // PINFINDER

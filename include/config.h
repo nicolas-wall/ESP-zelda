@@ -41,3 +41,6 @@
 #define PIN_BTN_PREV    D0   // botón izquierdo  (anterior)
 #define PIN_BTN_OK      D1   // botón del medio  (OK / mantener = volver)
 #define PIN_BTN_NEXT    D8   // botón derecho    (siguiente)
+
+// 1 = la otra pata de los botones va a GND, 0 = va a 3V3
+#define BTN_TO_GND      1
