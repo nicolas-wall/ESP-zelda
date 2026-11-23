@@ -38,8 +38,11 @@
 #define NOTIFY_REPEAT_S 30
 #define NOTIFY_REPEATS  3
 
-// 1 = jingle suave en cada hora en punto (entre las 9 y las 21)
-#define HOURLY_CHIME    0
+// Tema de Hyrule en cada hora en punto: 1 = sí, 0 = no.
+// Solo suena entre HYRULE_HOURLY_FROM y HYRULE_HOURLY_TO (inclusive).
+#define HYRULE_HOURLY       0
+#define HYRULE_HOURLY_FROM  9
+#define HYRULE_HOURLY_TO    21
 
 // =====================================================================
 //  HARDWARE

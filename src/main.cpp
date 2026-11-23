@@ -220,7 +220,9 @@ struct TypeBox {
       int li = page * perPage + i;
       if (li >= (int)lines.size()) break;
       int n = min(remaining, (int)lines[li].length());
-      u8g2.drawUTF8(x, y0 + i * lineH, lines[li].substring(0, n).c_str());
+      // x < 0 = centrar la línea (según su ancho completo, así no "baila" al escribir)
+      int lx = x >= 0 ? x : (128 - u8g2.getUTF8Width(lines[li].c_str())) / 2;
+      u8g2.drawUTF8(lx, y0 + i * lineH, lines[li].substring(0, n).c_str());
       remaining -= n;
     }
     if (full() && (now / 300) % 2 == 0) u8g2.drawTriangle(116, 57, 123, 57, 119, 61);
@@ -250,6 +252,10 @@ int noteChimes = 0;
 void pushNotification(const String& text) {
   if (pendingNotes.size() < 6) pendingNotes.push_back(text);
 }
+
+// Pedido de tocar el tema de Hyrule (desde el teléfono o cada hora)
+bool hyruleRequested = false;
+void playHyruleTheme() { hyruleRequested = true; }
 
 // Mayúsculas estilo NES, incluyendo á é í ó ú ñ ü (UTF-8 de 2 bytes 0xC3 xx).
 static String upperUtf8(const String& s) {
@@ -311,7 +317,7 @@ static void drawSpriteMirror(int x, int y, const char* const* rows, int h) {
 
 // Escena de la cueva: el mensaje arriba, el sabio entre dos fuegos y la espada.
 static void drawNotify(uint32_t now) {
-  noteBox.draw(2, 9, 10, now);
+  noteBox.draw(-1, 9, 10, now);  // x = -1: cada línea centrada
 
   bool f = (now / 140) % 2;
   if (f) {
@@ -323,12 +329,6 @@ static void drawNotify(uint32_t now) {
   }
   // el sabio aparece después de un instante
   if (now - noteStart > 250) drawSprite(58, 32, SPR_SAGE, 16);
-  if (now - noteStart > 450) {
-    drawSprite(62, 52, SPR_SWORD, 10);
-    int s = ((now - noteStart) / 120) % 8;
-    drawSparkle(70, 53, s < 3 ? s + 1 : 0);
-    drawSparkle(58, 59, s >= 4 && s < 7 ? s - 3 : 0);
-  }
   if (!pendingNotes.empty()) {
     char more[8];
     snprintf(more, sizeof(more), "+%d", (int)pendingNotes.size());
@@ -385,11 +385,11 @@ static void updateClock(uint32_t now) {
   // Cualquier botón abre el menú
   if (btnOk.shortRel || btnNext.shortRel || btnPrev.shortRel) enterScene(SC_MENU);
   if (now - fairyFlyStart > FAIRY_EVERY_MS) fairyFlyStart = now;
-#if HOURLY_CHIME
+#if HYRULE_HOURLY
   tm t;
   if (localTime(t) && t.tm_min == 0 && t.tm_hour != lastChimeHour) {
     lastChimeHour = t.tm_hour;
-    if (t.tm_hour >= 9 && t.tm_hour <= 21) music.play(&SONG_ITEM);
+    if (t.tm_hour >= HYRULE_HOURLY_FROM && t.tm_hour <= HYRULE_HOURLY_TO) playHyruleTheme();
   }
 #endif
 }
@@ -430,17 +430,11 @@ static void drawClock(uint32_t now) {
     for (int i = 0; i < 6; i++)
       if (((now / 500) + i * 2) % 5) u8g2.drawPixel(NIGHT_STARS[i][0], NIGHT_STARS[i][1]);
 
-  // Hora con la Trifuerza como separador; un destello recorre sus puntas
-  char hh[3], mm[3];
-  snprintf(hh, sizeof(hh), "%02d", t.tm_hour);
-  snprintf(mm, sizeof(mm), "%02d", t.tm_min);
+  // Hora centrada
+  char hm[6];
+  snprintf(hm, sizeof(hm), "%02d:%02d", t.tm_hour, t.tm_min);
   u8g2.setFont(u8g2_font_ncenB24_tn);
-  u8g2.drawStr(50 - u8g2.getStrWidth(hh), 43, hh);
-  u8g2.drawStr(78, 43, mm);
-  drawTriforce(64, 21, 10);
-  static const int TIPS[3][2] = {{64, 18}, {52, 42}, {76, 42}};
-  const int* tip = TIPS[t.tm_sec % 3];
-  drawSparkle(tip[0], tip[1], 2);
+  u8g2.drawStr((128 - u8g2.getStrWidth(hm)) / 2, 43, hm);
 
   // Abajo: sol/luna + fecha; a la derecha la campanita si hay recordatorios
   if (day) drawSunSmall(4, 58, now);
@@ -451,12 +445,7 @@ static void drawClock(uint32_t now) {
   u8g2.drawUTF8(11, 63, date);
 
   int idx[MAX_REMINDERS];
-  if (reminders.sorted(t, idx) > 0) {
-    // titila si falta poco (10 min o menos)
-    int mins = reminders.minutesUntil(reminders.items[idx[0]], t);
-    bool soon = mins >= 0 && mins <= 10;
-    if (!soon || (now / 400) % 2) drawSprite(120, 55, SPR_BELL, 7);
-  }
+  if (reminders.sorted(t, idx) > 0) drawSprite(120, 55, SPR_BELL, 7);
   if (music.muted()) {
     u8g2.drawLine(108, 56, 112, 60);
     u8g2.drawLine(108, 60, 112, 56);
@@ -1026,6 +1015,12 @@ void loop() {
   if (!pendingNotes.empty() && scene != SC_NOTIFY && scene != SC_BOOT) {
     enterScene(SC_NOTIFY);
     btnOk.shortRel = false;
+  }
+  if (hyruleRequested && scene != SC_NOTIFY && scene != SC_BOOT) {
+    hyruleRequested = false;
+    for (int i = 0; i < OCARINA_SONG_COUNT; i++)
+      if (OCARINA_SONGS[i] == &SONG_OVERWORLD) ocaSel = i;
+    enterScene(SC_OCA_PLAY);
   }
 
   uint32_t st = now - sceneStart;

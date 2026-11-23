@@ -11,6 +11,7 @@
 
 extern Reminders reminders;
 void pushNotification(const String& text);
+void playHyruleTheme();
 
 static WiFiManager wm;
 static WebServer server(80);
@@ -87,6 +88,9 @@ static void handleRoot() {
          "<form method=post action=/msg><input name=text maxlength=59 required placeholder='¡Hola desde el teléfono!'>"
          "<button>Enviar al hada</button></form></div>");
 
+  h += F("<div class=card><h2>Música</h2>"
+         "<form method=post action=/play><button>♪ Tocar el tema de Hyrule</button></form></div>");
+
   h += F("<div class=card><h2>Nuevo recordatorio</h2><form method=post action=/add>"
          "<label>Hora</label><input type=time name=time required>"
          "<label>Mensaje</label><input name=text maxlength=59 required placeholder='Tomar agua'>"
@@ -146,6 +150,12 @@ static void handleDel() {
   redirectHome("");
 }
 
+static void handlePlay() {
+  playHyruleTheme();
+  if (server.method() == HTTP_POST) redirectHome("?ok=1");
+  else server.send(200, "text/plain; charset=utf-8", "ok");
+}
+
 static void handleMsg() {
   String text = server.arg("text");
   text.trim();
@@ -166,12 +176,14 @@ void netLoop() {
   wm.process();
   if (!serverUp && netConnected()) {
     serverUp = true;
+    WiFi.setSleep(false);  // sin ahorro de energía: las páginas largas llegaban cortadas
     configTzTime(TIMEZONE, "pool.ntp.org", "time.google.com");
     MDNS.begin("hyrule");
     server.on("/", HTTP_GET, handleRoot);
     server.on("/add", HTTP_POST, handleAdd);
     server.on("/del", HTTP_POST, handleDel);
     server.on("/msg", handleMsg);
+    server.on("/play", handlePlay);
     server.begin();
     MDNS.addService("http", "tcp", 80);
   }
