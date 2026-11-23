@@ -9,9 +9,11 @@ Reloj de escritorio estilo Zelda con recordatorios que cargás desde el teléfon
 
 ## Usar desde el teléfono
 
-1. **Primera vez, si no tiene WiFi guardado:** desde el teléfono conectate a la red **Hyrule-Setup** y elegí tu WiFi en la página que se abre.
-2. En el reloj, entrá a **Menú → Conexión** y vas a ver la dirección, por ejemplo `http://192.168.100.52`.
-3. Abrí esa dirección en el navegador del teléfono, que tiene que estar en el mismo WiFi. Te conviene agregarla a la pantalla de inicio.
+1. **Primera vez, si no tiene WiFi guardado:** el reloj muestra un **código QR**. Escanealo con la cámara del teléfono para conectarte a la red **Hyrule-Setup**, y elegí tu WiFi en la página que se abre.
+2. **Para abrir la página:** mantené apretado el **botón derecho** en el reloj, o entrá a **Menú → Conexión (QR)**. Escaneá el QR con la cámara y se abre sola.
+3. **Sin QR:** escribí **`http://hyrule.local`** en el navegador. Funciona en iPhone y en computadoras; en algunos Android hay que usar el número que aparece debajo, por ejemplo `192.168.100.52`.
+
+Te conviene agregar la página a la pantalla de inicio del teléfono.
 
 **Atajo:** abrir `http://<ip>/msg?text=Hola` manda el mensaje al instante. Sirve para crear un atajo en iOS (Atajos) o en Android (HTTP Shortcuts).
 
@@ -21,13 +23,13 @@ Reloj de escritorio estilo Zelda con recordatorios que cargás desde el teléfon
 
 | Pantalla | Izquierda | OK (medio) | Derecha |
 |---|---|---|---|
-| Reloj | abrir menú | abrir menú | abrir menú |
+| Reloj | abrir menú | abrir menú | abrir menú (mantener: QR de conexión) |
 | Listas | subir | elegir | bajar |
 | Aviso | — | leer / cerrar | — |
 
 - **Mantener izquierda:** silenciar o activar el sonido. Se guarda, y en el reloj aparece una ✕ abajo, junto a la campanita.
 - **Mantener OK:** volver al reloj.
-- **Mantener derecha** en *Conexión*: borrar el WiFi guardado y volver a configurarlo.
+- **Mantener derecha** en *Conexión*: pregunta si querés borrar el WiFi guardado. OK confirma; izquierda o derecha cancelan.
 - Después de 1 minuto sin tocar nada, vuelve solo al reloj.
 
 ## Conexiones

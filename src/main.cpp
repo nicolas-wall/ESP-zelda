@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <qrcode.h>
 #include <time.h>
 #include <vector>
 
@@ -381,9 +382,12 @@ static void drawMoonSmall(int x, int y) {
   u8g2.setDrawColor(1);
 }
 
+static void drawNet(uint32_t now);
+
 static void updateClock(uint32_t now) {
-  // Cualquier botón abre el menú
+  // Cualquier botón abre el menú; mantener derecha abre directo la conexión (QR)
   if (btnOk.shortRel || btnNext.shortRel || btnPrev.shortRel) enterScene(SC_MENU);
+  if (btnNext.longPress) enterScene(SC_NET);
   if (now - fairyFlyStart > FAIRY_EVERY_MS) fairyFlyStart = now;
 #if HYRULE_HOURLY
   tm t;
@@ -397,13 +401,13 @@ static void updateClock(uint32_t now) {
 static void drawClock(uint32_t now) {
   tm t;
   if (!localTime(t)) {
+    if (netPortalActive()) {  // sin WiFi: mostrar el QR para configurarlo
+      drawNet(now);
+      return;
+    }
     drawTriforce(64, 2, 10);
     u8g2.setFont(u8g2_font_6x10_tf);
-    if (netPortalActive()) {
-      centerText(34, "Configurá el WiFi:");
-      centerText(46, "conectate a la red");
-      centerText(58, WIFI_SETUP_AP);
-    } else {
+    {
       centerText(40, netConnected() ? "Buscando la hora..." : "Conectando WiFi...");
       if ((now / 400) % 2) centerText(54, "...");
     }
@@ -526,11 +530,11 @@ static void drawList(const char* title, const char* const* items, int n, int sel
   }
 }
 
-static const char* const MENU_ITEMS[] = {"Reloj",          "Recordatorios", "Ocarina",
-                                         "Abrir el cofre", "Corazones",     "Hada",
-                                         "Conexión"};
-static const Scene MENU_TARGETS[] = {SC_CLOCK, SC_REMINDERS, SC_OCA_LIST, SC_CHEST,
-                                     SC_HEARTS, SC_FAIRY, SC_NET};
+static const char* const MENU_ITEMS[] = {"Recordatorios", "Conexión (QR)", "Ocarina",
+                                         "Abrir el cofre", "Corazones",    "Hada",
+                                         "Volver al reloj"};
+static const Scene MENU_TARGETS[] = {SC_REMINDERS, SC_NET,  SC_OCA_LIST, SC_CHEST,
+                                     SC_HEARTS,    SC_FAIRY, SC_CLOCK};
 const int MENU_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 int menuSel = 0, menuScroll = 0;
 
@@ -590,37 +594,104 @@ static void drawReminders(uint32_t now) {
   centerText(63, url.c_str());
 }
 
-// ---------- Conexión ----------
+// ---------- Conexión (con código QR) ----------
+// Usa el generador de QR que trae el ESP32 (esp_qrcode).
+static uint8_t qrBits[(41 * 41 + 7) / 8];
+static int qrSize = 0;
+static String qrText;
+
+static void qrCapture(esp_qrcode_handle_t q) {
+  qrSize = esp_qrcode_get_size(q);
+  memset(qrBits, 0, sizeof(qrBits));
+  for (int y = 0; y < qrSize; y++)
+    for (int x = 0; x < qrSize; x++)
+      if (esp_qrcode_get_module(q, x, y)) qrBits[(y * qrSize + x) / 8] |= 1 << ((y * qrSize + x) % 8);
+}
+
+static void qrMake(const String& text) {
+  if (text == qrText) return;
+  qrText = text;
+  qrSize = 0;
+  esp_qrcode_config_t cfg;
+  cfg.display_func = qrCapture;
+  cfg.max_qrcode_version = 4;
+  cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
+  esp_qrcode_generate(&cfg, text.c_str());
+}
+
+// Dibuja el QR con módulos negros sobre fondo blanco (lo que esperan las cámaras),
+// con margen blanco de 2 módulos. Devuelve el ancho total en píxeles.
+static int drawQR(int x, int y, int scale) {
+  if (qrSize == 0) return 0;
+  if ((qrSize + 4) * scale > 62) scale = 1;  // QR grande: que entre en la pantalla
+  int total = (qrSize + 4) * scale;
+  u8g2.drawBox(x, y, total, total);
+  u8g2.setDrawColor(0);
+  for (int my = 0; my < qrSize; my++)
+    for (int mx = 0; mx < qrSize; mx++) {
+      int i = my * qrSize + mx;
+      if (qrBits[i / 8] & (1 << (i % 8))) u8g2.drawBox(x + (mx + 2) * scale, y + (my + 2) * scale, scale, scale);
+    }
+  u8g2.setDrawColor(1);
+  return total;
+}
+
+bool netConfirmReset = false;
+
 static void updateNet(uint32_t now) {
-  if (btnOk.shortRel) enterScene(SC_MENU);
-  if (btnNext.longPress) {
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_6x10_tf);
-    centerText(36, "Borrando WiFi...");
-    u8g2.sendBuffer();
-    netResetWifi();
+  if (netConfirmReset) {
+    if (btnOk.shortRel) {
+      u8g2.clearBuffer();
+      u8g2.setFont(u8g2_font_6x10_tf);
+      centerText(36, "Borrando WiFi...");
+      u8g2.sendBuffer();
+      netResetWifi();
+    }
+    if (btnPrev.shortRel || btnNext.shortRel) netConfirmReset = false;
+    return;
   }
+  if (btnOk.shortRel || btnPrev.shortRel || btnNext.shortRel) enterScene(SC_CLOCK);
+  if (btnNext.longPress && now - sceneStart > 1500) netConfirmReset = true;
 }
 
 static void drawNet(uint32_t now) {
-  u8g2.setFont(u8g2_font_6x10_tf);
-  centerText(9, "Conexión");
-  u8g2.drawHLine(0, 12, 128);
+  const int tx = 63;  // columna de texto a la derecha del QR
   if (netConnected()) {
+    qrMake("http://" + netIP());
+    drawQR(1, 3, 2);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawUTF8(tx, 8, "Escaneá con");
+    u8g2.drawUTF8(tx, 17, "la cámara");
+    u8g2.drawUTF8(tx, 26, "o entrá a:");
+    u8g2.drawStr(tx, 39, "hyrule.local");
+    u8g2.setFont(u8g2_font_4x6_tf);
+    u8g2.drawStr(tx, 50, netIP().c_str());
     String ssid = "WiFi: " + netSSID();
-    String ip = "http://" + netIP();
-    u8g2.drawUTF8(0, 25, ssid.c_str());
-    u8g2.drawStr(0, 37, ip.c_str());
-    u8g2.drawStr(0, 49, "http://hyrule.local");
+    u8g2.drawUTF8(tx, 60, ssid.c_str());
   } else if (netPortalActive()) {
-    u8g2.drawUTF8(0, 25, "Sin WiFi. Desde el");
-    u8g2.drawUTF8(0, 37, "teléfono conectate a:");
-    u8g2.drawStr(0, 49, WIFI_SETUP_AP);
+    qrMake(String("WIFI:S:") + WIFI_SETUP_AP + ";T:nopass;;");
+    drawQR(1, 3, 2);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawUTF8(tx, 8, "Sin WiFi.");
+    u8g2.drawUTF8(tx, 19, "Escaneá para");
+    u8g2.drawUTF8(tx, 28, "conectarte a");
+    u8g2.drawStr(tx, 39, WIFI_SETUP_AP);
+    u8g2.drawUTF8(tx, 50, "y elegí tu");
+    u8g2.drawUTF8(tx, 59, "red de casa");
   } else {
-    u8g2.drawUTF8(0, 30, "Conectando...");
+    drawTriforce(64, 6, 12);
+    u8g2.setFont(u8g2_font_6x10_tf);
+    centerText(48, "Conectando WiFi...");
   }
-  u8g2.setFont(u8g2_font_5x7_tf);
-  u8g2.drawUTF8(0, 63, "Mantener > : borrar WiFi");
+  if (netConfirmReset) {
+    u8g2.setDrawColor(0);
+    u8g2.drawBox(14, 16, 100, 32);
+    u8g2.setDrawColor(1);
+    u8g2.drawRFrame(14, 16, 100, 32, 3);
+    u8g2.setFont(u8g2_font_6x10_tf);
+    centerText(29, "¿Borrar el WiFi?");
+    centerText(42, "OK = sí  < > = no");
+  }
 }
 
 // ---------- Ocarina ----------
@@ -948,6 +1019,7 @@ void enterScene(Scene s) {
       break;
     case SC_REMINDERS: refreshReminderList(); break;
     case SC_CLOCK: fairyFlyStart = now; break;
+    case SC_NET: netConfirmReset = false; break;
     case SC_NOTIFY: startNextNotification(now); break;
     default: break;
   }
