@@ -1,15 +1,18 @@
-// Cofre de Hyrule — un regalo para fans de Zelda
+// Reloj de Hyrule — reloj de escritorio con recordatorios estilo Zelda
 // XIAO ESP32-S3 + OLED 128x64 I2C + buzzer pasivo + 3 botones
 
 #if !defined(PINFINDER) && !defined(BUZZTEST)
 #include <Arduino.h>
+#include <Preferences.h>
 #include <U8g2lib.h>
 #include <Wire.h>
-#include <Preferences.h>
+#include <time.h>
 #include <vector>
 
 #include "config.h"
 #include "music.h"
+#include "net.h"
+#include "reminders.h"
 #include "songs.h"
 #include "sprites.h"
 
@@ -25,6 +28,8 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, PIN_OLED_RES, PIN_OLED_SCL, PIN
 #endif
 
 MusicPlayer music;
+Reminders reminders;
+Preferences prefs;
 
 struct Button {
   uint8_t pin;
@@ -91,31 +96,43 @@ static void drawSparkle(int x, int y, int size) {
 }
 
 // Trifuerza: cx = centro, ty = punta superior, h = alto de cada triángulo.
-// dx/dy desplazan cada pieza (0 = arriba, 1 = abajo-izq, 2 = abajo-der).
 static void drawTriforce(int cx, int ty, int h, const int* dx = nullptr, const int* dy = nullptr) {
-  int hb = (h * 577) / 1000;  // media base de un triángulo equilátero
+  int hb = (h * 577) / 1000;
   int ox[3] = {0, 0, 0}, oy[3] = {0, 0, 0};
   for (int i = 0; i < 3; i++) {
     if (dx) ox[i] = dx[i];
     if (dy) oy[i] = dy[i];
   }
-  u8g2.drawTriangle(cx + ox[0], ty + oy[0],
-                    cx - hb + ox[0], ty + h + oy[0],
-                    cx + hb + ox[0], ty + h + oy[0]);
-  u8g2.drawTriangle(cx - hb + ox[1], ty + h + oy[1],
-                    cx - 2 * hb + ox[1], ty + 2 * h + oy[1],
-                    cx + ox[1], ty + 2 * h + oy[1]);
-  u8g2.drawTriangle(cx + hb + ox[2], ty + h + oy[2],
-                    cx + ox[2], ty + 2 * h + oy[2],
-                    cx + 2 * hb + ox[2], ty + 2 * h + oy[2]);
+  u8g2.drawTriangle(cx + ox[0], ty + oy[0], cx - hb + ox[0], ty + h + oy[0], cx + hb + ox[0], ty + h + oy[0]);
+  u8g2.drawTriangle(cx - hb + ox[1], ty + h + oy[1], cx - 2 * hb + ox[1], ty + 2 * h + oy[1], cx + ox[1], ty + 2 * h + oy[1]);
+  u8g2.drawTriangle(cx + hb + ox[2], ty + h + oy[2], cx + ox[2], ty + 2 * h + oy[2], cx + 2 * hb + ox[2], ty + 2 * h + oy[2]);
+}
+
+static const int SPARKLES[][2] = {{8, 8},   {119, 10}, {16, 34}, {111, 36},
+                                  {28, 18}, {100, 22}, {6, 56},  {121, 56}};
+
+static void drawSparkleField(uint32_t t) {
+  for (int i = 0; i < 8; i++) {
+    int phase = ((t + i * 170) / 110) % 9;
+    int size = phase < 3 ? phase + 1 : (phase < 5 ? 5 - phase : 0);
+    drawSparkle(SPARKLES[i][0], SPARKLES[i][1], size);
+  }
+}
+
+// Hada: cuerpo brillante + alas que aletean.
+static void drawFairyAt(int x, int y, uint32_t now) {
+  u8g2.drawDisc(x, y, 3);
+  if ((now / 150) % 2) u8g2.drawCircle(x, y, 6, U8G2_DRAW_ALL);
+  bool flap = (now / 70) % 2;
+  u8g2.drawEllipse(x - 6, y - 3, 3, flap ? 2 : 1);
+  u8g2.drawEllipse(x + 6, y - 3, 3, flap ? 2 : 1);
 }
 
 // Corta un texto en líneas que entren en `width` píxeles (usa la fuente actual).
-static std::vector<String> wrapText(const char* text, int width) {
+static std::vector<String> wrapText(const String& text, int width) {
   std::vector<String> lines;
+  String src = text + '\n';
   String para;
-  String src(text);
-  src += '\n';
   for (unsigned i = 0; i < src.length(); i++) {
     char ch = src[i];
     if (ch != '\n') {
@@ -143,36 +160,261 @@ static std::vector<String> wrapText(const char* text, int width) {
   return lines;
 }
 
+// Caja de texto que escribe letra por letra, con páginas (como en el juego).
+struct TypeBox {
+  std::vector<String> lines;
+  int perPage = 3, page = 0, typed = 0;
+  uint32_t last = 0;
+
+  void set(const String& text, int width, int per) {
+    u8g2.setFont(u8g2_font_6x10_tf);
+    lines = wrapText(text, width);
+    perPage = per;
+    page = 0;
+    typed = 0;
+  }
+  int pages() const { return (lines.size() + perPage - 1) / perPage; }
+  int pageBytes() const {
+    int total = 0;
+    for (int i = 0; i < perPage; i++) {
+      int li = page * perPage + i;
+      if (li < (int)lines.size()) total += lines[li].length();
+    }
+    return total;
+  }
+  uint8_t byteAt(int k) const {
+    for (int i = 0; i < perPage; i++) {
+      int li = page * perPage + i;
+      if (li >= (int)lines.size()) break;
+      int len = lines[li].length();
+      if (k < len) return (uint8_t)lines[li][k];
+      k -= len;
+    }
+    return 0;
+  }
+  bool full() const { return typed >= pageBytes(); }
+  void tick(uint32_t now) {
+    if (now - last < 35 || full()) return;
+    last = now;
+    int total = pageBytes();
+    typed++;
+    while (typed < total && (byteAt(typed) & 0xC0) == 0x80) typed++;
+  }
+  // OK: completa la página, pasa a la siguiente o devuelve true si terminó.
+  bool ok() {
+    if (!full()) {
+      typed = pageBytes();
+      return false;
+    }
+    if (page + 1 < pages()) {
+      page++;
+      typed = 0;
+      return false;
+    }
+    return true;
+  }
+  void draw(int x, int y0, int lineH, uint32_t now) const {
+    u8g2.setFont(u8g2_font_6x10_tf);
+    int remaining = typed;
+    for (int i = 0; i < perPage && remaining > 0; i++) {
+      int li = page * perPage + i;
+      if (li >= (int)lines.size()) break;
+      int n = min(remaining, (int)lines[li].length());
+      u8g2.drawUTF8(x, y0 + i * lineH, lines[li].substring(0, n).c_str());
+      remaining -= n;
+    }
+    if (full() && (now / 300) % 2 == 0) u8g2.drawTriangle(116, 57, 123, 57, 119, 61);
+  }
+};
+
 // ----------------------------------------------------------------------------
 // Escenas
 // ----------------------------------------------------------------------------
-enum Scene { SC_BOOT, SC_MENU, SC_OCA_LIST, SC_OCA_PLAY, SC_CHEST, SC_HEARTS, SC_FAIRY };
+enum Scene {
+  SC_BOOT, SC_CLOCK, SC_MENU, SC_REMINDERS, SC_NET, SC_NOTIFY,
+  SC_OCA_LIST, SC_OCA_PLAY, SC_CHEST, SC_HEARTS, SC_FAIRY
+};
 Scene scene = SC_BOOT;
 uint32_t sceneStart = 0, lastInput = 0;
 
 void enterScene(Scene s);
 
-// ---------- Arranque: la Trifuerza se arma + pantalla de título ----------
-const uint32_t BOOT_FLY = 1800, BOOT_FLASH = 700;
-bool bootChime = false;
+static bool localTime(tm& t) { return timeValid() && getLocalTime(&t, 0); }
 
-static const int SPARKLES[][2] = {{8, 8},   {119, 10}, {16, 34}, {111, 36},
-                                  {28, 18}, {100, 22}, {6, 56},  {121, 56}};
+// ---------- Notificaciones (las manda un recordatorio o el teléfono) ----------
+std::vector<String> pendingNotes;
+TypeBox noteBox;
+uint32_t noteChimeAt = 0;
+int noteChimes = 0;
 
-static void drawSparkleField(uint32_t t) {
-  for (int i = 0; i < 8; i++) {
-    int phase = ((t + i * 170) / 110) % 9;
-    int size = phase < 3 ? phase + 1 : (phase < 5 ? 5 - phase : 0);
-    drawSparkle(SPARKLES[i][0], SPARKLES[i][1], size);
+void pushNotification(const String& text) {
+  if (pendingNotes.size() < 6) pendingNotes.push_back(text);
+}
+
+static void startNextNotification(uint32_t now) {
+  noteBox.set(pendingNotes.front(), 116, 4);
+  pendingNotes.erase(pendingNotes.begin());
+  noteChimes = 1;
+  noteChimeAt = now + NOTIFY_REPEAT_S * 1000UL;
+  music.play(&SONG_HEY);
+}
+
+static void updateNotify(uint32_t now) {
+  noteBox.tick(now);
+  if (noteChimes < NOTIFY_REPEATS && (int32_t)(now - noteChimeAt) >= 0) {
+    noteChimes++;
+    noteChimeAt = now + NOTIFY_REPEAT_S * 1000UL;
+    music.play(&SONG_HEY);
+  }
+  if (btnOk.shortRel && noteBox.ok()) {
+    if (!pendingNotes.empty()) startNextNotification(now);
+    else enterScene(SC_CLOCK);
   }
 }
+
+static void drawNotify(uint32_t now) {
+  float s = now / 1000.0f;
+  drawFairyAt(10 + (int)(3 * sinf(s * 2.1f)), 7 + (int)(2 * sinf(s * 3.3f)), now);
+  u8g2.setFont(u8g2_font_6x10_tf);
+  u8g2.drawUTF8(24, 10, "¡Hey! ¡Escucha!");
+  if (!pendingNotes.empty()) {
+    char more[8];
+    snprintf(more, sizeof(more), "+%d", (int)pendingNotes.size());
+    u8g2.drawStr(127 - u8g2.getStrWidth(more), 10, more);
+  }
+  u8g2.drawRFrame(1, 15, 126, 49, 3);
+  noteBox.draw(6, 27, 11, now);
+}
+
+// ---------- Reloj ----------
+static const char* const DAYS[] = {"dom", "lun", "mar", "mié", "jue", "vie", "sáb"};
+static const char* const MONTHS[] = {"ene", "feb", "mar", "abr", "may", "jun",
+                                     "jul", "ago", "sep", "oct", "nov", "dic"};
+static const char* const SPR_BELL[] = {
+  "...#...",
+  "..###..",
+  ".#####.",
+  ".#####.",
+  ".#####.",
+  "#######",
+  "...#...",
+};
+static const int STARS[][2] = {{5, 3},  {19, 9},  {33, 2},  {47, 7},  {61, 3},
+                               {75, 10}, {89, 4}, {103, 8}, {117, 2}, {124, 11}};
+int lastChimeHour = -1;
+
+static void drawSun(int x, int y, uint32_t now) {
+  u8g2.drawDisc(x, y, 3);
+  float a0 = (now % 4000) / 4000.0f * PI / 2;
+  for (int k = 0; k < 4; k++) {
+    float a = a0 + k * PI / 2;
+    u8g2.drawLine(x + cosf(a) * 5, y + sinf(a) * 5, x + cosf(a) * 7, y + sinf(a) * 7);
+  }
+}
+
+static void drawMoon(int x, int y) {
+  u8g2.drawDisc(x, y, 4);
+  u8g2.setDrawColor(0);
+  u8g2.drawDisc(x + 2, y - 1, 3);
+  u8g2.setDrawColor(1);
+}
+
+static void drawCloud(int x, int y) {
+  u8g2.drawDisc(x, y, 3);
+  u8g2.drawDisc(x + 4, y - 2, 4);
+  u8g2.drawDisc(x + 9, y, 3);
+  u8g2.drawHLine(x, y + 3, 10);
+}
+
+static void updateClock(uint32_t now) {
+  if (btnOk.shortRel) enterScene(SC_MENU);
+  if (btnNext.shortRel) enterScene(SC_REMINDERS);
+#if HOURLY_CHIME
+  tm t;
+  if (localTime(t) && t.tm_min == 0 && t.tm_hour != lastChimeHour) {
+    lastChimeHour = t.tm_hour;
+    if (t.tm_hour >= 9 && t.tm_hour <= 21) music.play(&SONG_ITEM);
+  }
+#endif
+}
+
+static void drawClock(uint32_t now) {
+  tm t;
+  if (!localTime(t)) {
+    drawTriforce(64, 2, 10);
+    u8g2.setFont(u8g2_font_6x10_tf);
+    if (netPortalActive()) {
+      centerText(34, "Configurá el WiFi:");
+      centerText(46, "conectate a la red");
+      centerText(58, WIFI_SETUP_AP);
+    } else {
+      centerText(40, netConnected() ? "Buscando la hora..." : "Conectando WiFi...");
+      if ((now / 400) % 2) centerText(54, "...");
+    }
+    return;
+  }
+
+  // Cielo: sol de 7 a 20, luna y estrellas de noche.
+  float hf = t.tm_hour + t.tm_min / 60.0f;
+  bool day = hf >= 7 && hf < 20;
+  float p = day ? (hf - 7) / 13.0f : fmodf(hf - 20 + 24, 24) / 11.0f;
+  int sx = 6 + (int)(p * 116);
+  int sy = 13 - (int)(sinf(p * PI) * 9);
+  if (day) {
+    drawCloud((int)((now / 180) % 170) - 20, 9);
+    drawCloud((int)((now / 260 + 90) % 170) - 20, 5);
+    u8g2.setDrawColor(0);
+    u8g2.drawDisc(sx, sy, 8);
+    u8g2.setDrawColor(1);
+    drawSun(sx, sy, now);
+  } else {
+    for (int i = 0; i < 10; i++)
+      if (((now / 600) + i * 3) % 7) u8g2.drawPixel(STARS[i][0], STARS[i][1]);
+    drawMoon(sx, sy);
+  }
+
+  // Hora grande con los dos puntos titilando
+  char hh[3], mm[3];
+  snprintf(hh, sizeof(hh), "%02d", t.tm_hour);
+  snprintf(mm, sizeof(mm), "%02d", t.tm_min);
+  u8g2.setFont(u8g2_font_logisoso24_tn);
+  int wh = u8g2.getStrWidth(hh);
+  u8g2.drawStr(58 - wh, 46, hh);
+  if (t.tm_sec % 2 == 0) u8g2.drawStr(60, 44, ":");
+  u8g2.drawStr(70, 46, mm);
+
+  // Abajo: fecha y próximo recordatorio
+  u8g2.setFont(u8g2_font_6x10_tf);
+  char date[24];
+  snprintf(date, sizeof(date), "%s %d %s", DAYS[t.tm_wday], t.tm_mday, MONTHS[t.tm_mon]);
+  u8g2.drawUTF8(0, 63, date);
+
+  int idx[MAX_REMINDERS];
+  if (reminders.sorted(t, idx) > 0) {
+    const Reminder& r = reminders.items[idx[0]];
+    char hm[8];
+    snprintf(hm, sizeof(hm), "%02d:%02d", r.hour, r.minute);
+    int w = u8g2.getStrWidth(hm);
+    u8g2.drawStr(128 - w, 63, hm);
+    drawSprite(128 - w - 10, 55, SPR_BELL, 7);
+  }
+  if (music.muted()) {
+    u8g2.drawLine(121, 1, 126, 6);
+    u8g2.drawLine(121, 6, 126, 1);
+  }
+}
+
+// ---------- Arranque: la Trifuerza se arma + título ----------
+const uint32_t BOOT_FLY = 1800, BOOT_FLASH = 700, BOOT_TITLE = 4500;
+bool bootChime = false;
 
 static void updateBoot(uint32_t now, uint32_t t) {
   if (t >= BOOT_FLY && !bootChime) {
     bootChime = true;
-    music.play(&SONG_SECRET, &SONG_LULLABY);
+    music.play(&SONG_SECRET);
   }
-  if (t > BOOT_FLY && (btnOk.shortRel || btnPrev.shortRel || btnNext.press)) enterScene(SC_MENU);
+  bool pressed = btnOk.shortRel || btnPrev.shortRel || btnNext.shortRel;
+  if ((t > BOOT_FLY && pressed) || t > BOOT_FLY + BOOT_FLASH + BOOT_TITLE) enterScene(SC_CLOCK);
 }
 
 static void drawBoot(uint32_t now, uint32_t t) {
@@ -182,7 +424,7 @@ static void drawBoot(uint32_t now, uint32_t t) {
     int dy[3] = {(int)(-70 * (1 - e)), (int)(40 * (1 - e)), (int)(40 * (1 - e))};
     drawTriforce(64, 6, 26, dx, dy);
     if (t > BOOT_FLY && ((t - BOOT_FLY) / 90) % 2 == 0) {
-      u8g2.setDrawColor(2);  // XOR = destello
+      u8g2.setDrawColor(2);
       u8g2.drawBox(0, 0, 128, 64);
       u8g2.setDrawColor(1);
     }
@@ -197,21 +439,17 @@ static void drawBoot(uint32_t now, uint32_t t) {
   }
   if (tt > 900) {
     u8g2.setFont(u8g2_font_ncenB12_tf);
-    centerText(56, GIFT_NAME);
-  }
-  if (tt > 1800 && (tt / 500) % 2 == 0) {
-    u8g2.setFont(u8g2_font_5x7_tf);
-    centerText(64, "- OK -");
+    centerText(58, GIFT_NAME);
   }
 }
 
-// ---------- Listas (menú principal y canciones) ----------
+// ---------- Listas (menú, canciones, recordatorios) ----------
 static void drawList(const char* title, const char* const* items, int n, int sel, int& scroll) {
   const int rows = 4, rowH = 12, y0 = 14;
   u8g2.setFont(u8g2_font_6x10_tf);
   drawTriforce(6, 1, 5);
   drawTriforce(121, 1, 5);
-  if (music.muted()) {  // pequeño indicador de silencio en el encabezado
+  if (music.muted()) {
     u8g2.drawLine(113, 2, 118, 7);
     u8g2.drawLine(113, 7, 118, 2);
   }
@@ -240,17 +478,101 @@ static void drawList(const char* title, const char* const* items, int n, int sel
   }
 }
 
-static const char* const MENU_ITEMS[] = {"Ocarina", "Abrir el cofre", "Corazones", "Hada"};
-const int MENU_COUNT = 4;
+static const char* const MENU_ITEMS[] = {"Reloj",          "Recordatorios", "Ocarina",
+                                         "Abrir el cofre", "Corazones",     "Hada",
+                                         "Conexión"};
+static const Scene MENU_TARGETS[] = {SC_CLOCK, SC_REMINDERS, SC_OCA_LIST, SC_CHEST,
+                                     SC_HEARTS, SC_FAIRY, SC_NET};
+const int MENU_COUNT = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 int menuSel = 0, menuScroll = 0;
 
 static void updateMenu(uint32_t now) {
   if (btnPrev.shortRel) menuSel = (menuSel + MENU_COUNT - 1) % MENU_COUNT;
-  if (btnNext.press) menuSel = (menuSel + 1) % MENU_COUNT;
-  if (btnOk.shortRel) {
-    const Scene targets[] = {SC_OCA_LIST, SC_CHEST, SC_HEARTS, SC_FAIRY};
-    enterScene(targets[menuSel]);
+  if (btnNext.shortRel) menuSel = (menuSel + 1) % MENU_COUNT;
+  if (btnOk.shortRel) enterScene(MENU_TARGETS[menuSel]);
+}
+
+// ---------- Recordatorios (lista en el reloj) ----------
+String remLabels[MAX_REMINDERS];
+const char* remPtrs[MAX_REMINDERS];
+int remCount = 0, remSel = 0, remScroll = 0;
+
+static void refreshReminderList() {
+  tm t;
+  int idx[MAX_REMINDERS];
+  if (localTime(t)) {
+    remCount = reminders.sorted(t, idx);
+  } else {
+    remCount = 0;
+    for (int i = 0; i < MAX_REMINDERS; i++)
+      if (reminders.items[i].used) idx[remCount++] = i;
   }
+  for (int k = 0; k < remCount; k++) {
+    const Reminder& r = reminders.items[idx[k]];
+    char hm[8];
+    snprintf(hm, sizeof(hm), "%02d:%02d ", r.hour, r.minute);
+    remLabels[k] = String(hm) + r.text;
+    remPtrs[k] = remLabels[k].c_str();
+  }
+  if (remSel >= remCount) remSel = max(0, remCount - 1);
+}
+
+static void updateReminders(uint32_t now) {
+  if (remCount > 0) {
+    if (btnPrev.shortRel) remSel = (remSel + remCount - 1) % remCount;
+    if (btnNext.shortRel) remSel = (remSel + 1) % remCount;
+  }
+  if (btnOk.shortRel) enterScene(SC_CLOCK);
+  if ((now - sceneStart) % 2000 < 40) refreshReminderList();  // por si llegan nuevos
+}
+
+static void drawReminders(uint32_t now) {
+  if (remCount > 0) {
+    drawList("Recordatorios", remPtrs, remCount, remSel, remScroll);
+    return;
+  }
+  u8g2.setFont(u8g2_font_6x10_tf);
+  centerText(9, "Recordatorios");
+  u8g2.drawHLine(0, 12, 128);
+  centerText(28, "No hay ninguno.");
+  centerText(42, "Agregalos desde el");
+  centerText(54, "teléfono en:");
+  String url = netConnected() ? netIP() : String("(sin WiFi)");
+  u8g2.setFont(u8g2_font_5x7_tf);
+  centerText(63, url.c_str());
+}
+
+// ---------- Conexión ----------
+static void updateNet(uint32_t now) {
+  if (btnOk.shortRel) enterScene(SC_MENU);
+  if (btnNext.longPress) {
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tf);
+    centerText(36, "Borrando WiFi...");
+    u8g2.sendBuffer();
+    netResetWifi();
+  }
+}
+
+static void drawNet(uint32_t now) {
+  u8g2.setFont(u8g2_font_6x10_tf);
+  centerText(9, "Conexión");
+  u8g2.drawHLine(0, 12, 128);
+  if (netConnected()) {
+    String ssid = "WiFi: " + netSSID();
+    String ip = "http://" + netIP();
+    u8g2.drawUTF8(0, 25, ssid.c_str());
+    u8g2.drawStr(0, 37, ip.c_str());
+    u8g2.drawStr(0, 49, "http://hyrule.local");
+  } else if (netPortalActive()) {
+    u8g2.drawUTF8(0, 25, "Sin WiFi. Desde el");
+    u8g2.drawUTF8(0, 37, "teléfono conectate a:");
+    u8g2.drawStr(0, 49, WIFI_SETUP_AP);
+  } else {
+    u8g2.drawUTF8(0, 30, "Conectando...");
+  }
+  u8g2.setFont(u8g2_font_5x7_tf);
+  u8g2.drawUTF8(0, 63, "Mantener > : borrar WiFi");
 }
 
 // ---------- Ocarina ----------
@@ -260,7 +582,7 @@ uint32_t ocaDoneAt = 0;
 
 static void updateOcaList(uint32_t now) {
   if (btnPrev.shortRel) ocaSel = (ocaSel + OCARINA_SONG_COUNT - 1) % OCARINA_SONG_COUNT;
-  if (btnNext.press) ocaSel = (ocaSel + 1) % OCARINA_SONG_COUNT;
+  if (btnNext.shortRel) ocaSel = (ocaSel + 1) % OCARINA_SONG_COUNT;
   if (btnOk.shortRel) enterScene(SC_OCA_PLAY);
 }
 
@@ -292,7 +614,6 @@ static void drawOcaButton(int cx, int cy, char b, bool on) {
   u8g2.setDrawColor(1);
 }
 
-// Posición vertical de una nota sobre el pentagrama (Mi4 = línea de abajo).
 static int noteY(uint8_t midi) {
   static const uint8_t dia[12] = {0, 0, 1, 1, 2, 3, 3, 4, 4, 5, 5, 6};
   int step = (midi / 12) * 7 + dia[midi % 12];
@@ -300,7 +621,7 @@ static int noteY(uint8_t midi) {
 }
 
 static void updateOcaPlay(uint32_t now) {
-  if (btnOk.shortRel) {  // cortar
+  if (btnOk.shortRel) {
     music.stop();
     enterScene(SC_OCA_LIST);
     return;
@@ -329,7 +650,6 @@ static void drawOcaPlay(uint32_t now) {
     drawOcaButton(x0 + i * spacing, 21, b, on);
   }
 
-  // Pentagrama con las notas pasando por el cabezal
   for (int k = 0; k < 5; k++) u8g2.drawHLine(0, 40 + 4 * k, 128);
   const int head = 20;
   for (int y = 30; y < 64; y += 2) u8g2.drawPixel(head, y);
@@ -355,42 +675,9 @@ static void drawOcaPlay(uint32_t now) {
 
 // ---------- Cofre ----------
 int chestPhase = 0;  // 0 cerrado, 1 abriéndose, 2 texto
-uint32_t chestT0 = 0, lastType = 0;
+uint32_t chestT0 = 0;
 bool chestItemSfx = false;
-std::vector<String> chestLines;
-int chestPage = 0, chestTyped = 0;
-const int CHEST_LINES_PER_PAGE = 3;
-
-static int chestPageCount() {
-  return (chestLines.size() + CHEST_LINES_PER_PAGE - 1) / CHEST_LINES_PER_PAGE;
-}
-
-static int chestPageBytes() {
-  int total = 0;
-  for (int i = 0; i < CHEST_LINES_PER_PAGE; i++) {
-    int li = chestPage * CHEST_LINES_PER_PAGE + i;
-    if (li < (int)chestLines.size()) total += chestLines[li].length();
-  }
-  return total;
-}
-
-static uint8_t chestByteAt(int k) {
-  for (int i = 0; i < CHEST_LINES_PER_PAGE; i++) {
-    int li = chestPage * CHEST_LINES_PER_PAGE + i;
-    if (li >= (int)chestLines.size()) break;
-    int len = chestLines[li].length();
-    if (k < len) return (uint8_t)chestLines[li][k];
-    k -= len;
-  }
-  return 0;
-}
-
-static void chestAdvanceChar() {
-  int total = chestPageBytes();
-  if (chestTyped >= total) return;
-  chestTyped++;
-  while (chestTyped < total && (chestByteAt(chestTyped) & 0xC0) == 0x80) chestTyped++;
-}
+TypeBox chestBox;
 
 static void updateChest(uint32_t now) {
   if (chestPhase == 0) {
@@ -408,42 +695,25 @@ static void updateChest(uint32_t now) {
     }
     if (t > 2300) {
       chestPhase = 2;
-      chestPage = 0;
-      chestTyped = 0;
-      lastType = now;
+      chestBox.set(CHEST_MESSAGE, 116, 3);
     }
   } else {
-    if (now - lastType > 35) {
-      lastType = now;
-      chestAdvanceChar();
-    }
-    if (btnOk.shortRel) {
-      if (chestTyped < chestPageBytes()) {
-        chestTyped = chestPageBytes();
-      } else if (chestPage + 1 < chestPageCount()) {
-        chestPage++;
-        chestTyped = 0;
-      } else {
-        chestPhase = 0;
-      }
-    }
+    chestBox.tick(now);
+    if (btnOk.shortRel && chestBox.ok()) chestPhase = 0;
   }
 }
 
 static void drawChestBox(float o) {
-  // cuerpo
   u8g2.drawFrame(40, 34, 48, 24);
   u8g2.drawVLine(50, 34, 24);
   u8g2.drawVLine(77, 34, 24);
   u8g2.drawHLine(40, 55, 48);
-  // tapa
   int lh = 14 - (int)(9 * o);
   int ly = 34 - lh - (int)(6 * o);
   u8g2.drawRFrame(40, ly, 48, lh + 1, lh > 6 ? 4 : 1);
   u8g2.drawVLine(50, ly, lh);
   u8g2.drawVLine(77, ly, lh);
   if (o < 0.05f) {
-    // cerradura
     u8g2.drawBox(60, 30, 8, 8);
     u8g2.setDrawColor(0);
     u8g2.drawBox(63, 32, 2, 2);
@@ -457,7 +727,7 @@ static void drawChestBox(float o) {
 
 static void drawRays(uint32_t now, int cx, int cy, float len) {
   for (int k = 0; k < 7; k++) {
-    if (((now / 90) + k) % 3 == 0) continue;  // parpadeo
+    if (((now / 90) + k) % 3 == 0) continue;
     float a = -PI * (k + 1) / 8.0f;
     float c = cosf(a), s = sinf(a);
     u8g2.drawLine(cx + c * 7, cy + s * 7, cx + c * (7 + len), cy + s * (7 + len));
@@ -487,24 +757,12 @@ static void drawChest(uint32_t now) {
     }
     return;
   }
-  // caja de texto
   drawSprite(60, 2, SPR_RUPEE, 15);
   int s = (now / 110) % 8;
   drawSparkle(48, 8, s < 4 ? s : 0);
   drawSparkle(80, 12, s >= 4 ? s - 4 : 0);
   u8g2.drawRFrame(1, 20, 126, 44, 3);
-  u8g2.setFont(u8g2_font_6x10_tf);
-  int remaining = chestTyped;
-  for (int i = 0; i < CHEST_LINES_PER_PAGE; i++) {
-    int li = chestPage * CHEST_LINES_PER_PAGE + i;
-    if (li >= (int)chestLines.size() || remaining <= 0) break;
-    const String& line = chestLines[li];
-    int nbytes = min(remaining, (int)line.length());
-    u8g2.drawUTF8(6, 32 + i * 11, line.substring(0, nbytes).c_str());
-    remaining -= nbytes;
-  }
-  if (chestTyped >= chestPageBytes() && (now / 300) % 2 == 0)
-    u8g2.drawTriangle(116, 57, 123, 57, 119, 61);
+  chestBox.draw(6, 32, 11, now);
 }
 
 // ---------- Corazones ----------
@@ -533,18 +791,15 @@ static void drawHearts(uint32_t now) {
   for (int i = 0; i < total; i++) {
     int row = i / 10, col = i % 10;
     int perRow = min(10, total - row * 10);
-    int x0 = 64 - (perRow * 11 - 2) / 2;
-    int x = x0 + col * 11;
+    int x = 64 - (perRow * 11 - 2) / 2 + col * 11;
     int y = 11 + row * 11;
     bool full = i < heartsFilled;
-    // el último corazón lleno "late"
     if (full && i == heartsFilled - 1 && now - heartsLast < 120) y -= 1;
     drawSprite(x, y, full ? SPR_HEART : SPR_HEART_EMPTY, 8);
   }
   if (heartsFilled >= total) {
     u8g2.setFont(u8g2_font_6x10_tf);
-    for (size_t i = 0; i < heartsLines.size() && i < 2; i++)
-      centerText(46 + i * 11, heartsLines[i].c_str());
+    for (size_t i = 0; i < heartsLines.size() && i < 2; i++) centerText(46 + i * 11, heartsLines[i].c_str());
     drawSparkleField(now);
   }
 }
@@ -570,29 +825,16 @@ static void drawFairy(uint32_t now) {
   float s = now / 1000.0f;
   int x = 64 + (int)(46 * sinf(s * 0.9f) + 8 * sinf(s * 3.1f));
   int y = 32 + (int)(18 * sinf(s * 1.3f + 1) + 5 * cosf(s * 2.7f));
-
   trailHead = (trailHead + 1) % TRAIL;
   trailX[trailHead] = x;
   trailY[trailHead] = y;
-
-  // estrellitas de fondo
-  for (int i = 0; i < 8; i++) {
-    if (((now / 400) + i) % 4 == 0) continue;
-    u8g2.drawPixel(SPARKLES[i][0], SPARKLES[i][1]);
-  }
-  // estela
+  for (int i = 0; i < 8; i++)
+    if (((now / 400) + i) % 4) u8g2.drawPixel(SPARKLES[i][0], SPARKLES[i][1]);
   for (int i = 2; i < TRAIL; i++) {
     int k = (trailHead - i + TRAIL) % TRAIL;
-    if (random(TRAIL) < TRAIL - i)
-      u8g2.drawPixel(trailX[k] + random(-1, 2), trailY[k] + random(-1, 2));
+    if (random(TRAIL) < TRAIL - i) u8g2.drawPixel(trailX[k] + random(-1, 2), trailY[k] + random(-1, 2));
   }
-  // cuerpo brillante + alas
-  u8g2.drawDisc(x, y, 3);
-  if ((now / 150) % 2) u8g2.drawCircle(x, y, 6, U8G2_DRAW_ALL);
-  bool flap = (now / 70) % 2;
-  u8g2.drawEllipse(x - 6, y - 3, 3, flap ? 2 : 1);
-  u8g2.drawEllipse(x + 6, y - 3, 3, flap ? 2 : 1);
-
+  drawFairyAt(x, y, now);
   if (now < heyUntil) {
     u8g2.setFont(u8g2_font_6x10_tf);
     const char* msg = "¡Hey!";
@@ -607,38 +849,7 @@ static void drawFairy(uint32_t now) {
   }
 }
 
-// ----------------------------------------------------------------------------
-// Máquina de escenas
-// ----------------------------------------------------------------------------
-void enterScene(Scene s) {
-  uint32_t now = millis();
-  scene = s;
-  sceneStart = now;
-  lastInput = now;
-  switch (s) {
-    case SC_OCA_PLAY:
-      ocaDoneAt = 0;
-      music.play(OCARINA_SONGS[ocaSel], &SONG_SECRET);
-      break;
-    case SC_CHEST:
-      chestPhase = 0;
-      break;
-    case SC_HEARTS:
-      heartsFilled = 0;
-      heartsLast = now + 300;
-      break;
-    case SC_FAIRY:
-      nextHey = now + 2500;
-      heyUntil = 0;
-      for (int i = 0; i < TRAIL; i++) trailX[i] = trailY[i] = -10;
-      break;
-    default:
-      break;
-  }
-}
-
 // ---------- Silencio (mantener botón izquierdo) ----------
-Preferences prefs;
 uint32_t muteToastUntil = 0;
 
 static void drawSpeaker(int x, int y, bool muted) {
@@ -664,6 +875,35 @@ static void drawMuteToast() {
   u8g2.drawUTF8(x + 28, y + 16, music.muted() ? "Silencio" : "Sonido");
 }
 
+// ----------------------------------------------------------------------------
+// Máquina de escenas
+// ----------------------------------------------------------------------------
+void enterScene(Scene s) {
+  uint32_t now = millis();
+  scene = s;
+  sceneStart = now;
+  lastInput = now;
+  switch (s) {
+    case SC_OCA_PLAY:
+      ocaDoneAt = 0;
+      music.play(OCARINA_SONGS[ocaSel], &SONG_SECRET);
+      break;
+    case SC_CHEST: chestPhase = 0; break;
+    case SC_HEARTS:
+      heartsFilled = 0;
+      heartsLast = now + 300;
+      break;
+    case SC_FAIRY:
+      nextHey = now + 2500;
+      heyUntil = 0;
+      for (int i = 0; i < TRAIL; i++) trailX[i] = trailY[i] = -10;
+      break;
+    case SC_REMINDERS: refreshReminderList(); break;
+    case SC_NOTIFY: startNextNotification(now); break;
+    default: break;
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   btnPrev.begin();
@@ -672,16 +912,23 @@ void setup() {
   music.begin(PIN_BUZZER);
   prefs.begin("zelda", false);
   music.setMuted(prefs.getBool("muted", false));
+  reminders.begin();
 
   u8g2.setBusClock(400000);
   u8g2.begin();
   u8g2.setFontMode(1);
 
   for (int i = 0; i < OCARINA_SONG_COUNT; i++) ocaNames[i] = OCARINA_SONGS[i]->name;
-
   u8g2.setFont(u8g2_font_6x10_tf);
-  chestLines = wrapText(CHEST_MESSAGE, 116);
   heartsLines = wrapText(HEARTS_MESSAGE, 124);
+
+  // Pantalla mientras se conecta (puede tardar unos segundos)
+  u8g2.clearBuffer();
+  drawTriforce(64, 6, 20);
+  u8g2.setFont(u8g2_font_6x10_tf);
+  centerText(60, "Conectando...");
+  u8g2.sendBuffer();
+  netBegin();
 
   randomSeed(esp_random());
   enterScene(SC_BOOT);
@@ -689,29 +936,42 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+  netLoop();
   btnPrev.poll(now);
   btnOk.poll(now);
   btnNext.poll(now);
   if (btnPrev.press || btnOk.press || btnNext.press) lastInput = now;
 
-  // Mantener OK = volver al menú (desde cualquier escena salvo arranque/menú)
-  if (btnOk.longPress && scene != SC_BOOT && scene != SC_MENU) {
-    music.stop();
-    enterScene(SC_MENU);
-    btnOk.shortRel = false;
-  }
-
-  // Mantener botón izquierdo = silenciar / activar sonido (se guarda)
+  // Mantener izquierda = silenciar / activar sonido (se guarda)
   if (btnPrev.longPress) {
     music.setMuted(!music.muted());
     prefs.putBool("muted", music.muted());
     muteToastUntil = now + 1200;
   }
+  // Mantener OK = volver al reloj
+  if (btnOk.longPress && scene != SC_BOOT && scene != SC_CLOCK && scene != SC_NOTIFY) {
+    music.stop();
+    enterScene(SC_CLOCK);
+    btnOk.shortRel = false;
+  }
 
-  uint32_t t = now - sceneStart;
+  // ¿Toca algún recordatorio?
+  tm t;
+  String due;
+  if (localTime(t) && reminders.check(t, due)) pushNotification(due);
+  if (!pendingNotes.empty() && scene != SC_NOTIFY && scene != SC_BOOT) {
+    enterScene(SC_NOTIFY);
+    btnOk.shortRel = false;
+  }
+
+  uint32_t st = now - sceneStart;
   switch (scene) {
-    case SC_BOOT: updateBoot(now, t); break;
+    case SC_BOOT: updateBoot(now, st); break;
+    case SC_CLOCK: updateClock(now); break;
     case SC_MENU: updateMenu(now); break;
+    case SC_REMINDERS: updateReminders(now); break;
+    case SC_NET: updateNet(now); break;
+    case SC_NOTIFY: updateNotify(now); break;
     case SC_OCA_LIST: updateOcaList(now); break;
     case SC_OCA_PLAY: updateOcaPlay(now); break;
     case SC_CHEST: updateChest(now); break;
@@ -719,14 +979,20 @@ void loop() {
     case SC_FAIRY: updateFairy(now); break;
   }
 
-  if ((scene == SC_MENU || scene == SC_OCA_LIST) && now - lastInput > IDLE_TO_FAIRY_MS)
-    enterScene(SC_FAIRY);
+  // Sin tocar nada por un rato → vuelve al reloj
+  bool idleable = scene == SC_MENU || scene == SC_REMINDERS || scene == SC_NET ||
+                  scene == SC_OCA_LIST || scene == SC_HEARTS || (scene == SC_CHEST && chestPhase == 0);
+  if (idleable && now - lastInput > IDLE_TO_CLOCK_MS) enterScene(SC_CLOCK);
 
-  t = now - sceneStart;
+  st = now - sceneStart;
   u8g2.clearBuffer();
   switch (scene) {
-    case SC_BOOT: drawBoot(now, t); break;
+    case SC_BOOT: drawBoot(now, st); break;
+    case SC_CLOCK: drawClock(now); break;
     case SC_MENU: drawList("Hyrule", MENU_ITEMS, MENU_COUNT, menuSel, menuScroll); break;
+    case SC_REMINDERS: drawReminders(now); break;
+    case SC_NET: drawNet(now); break;
+    case SC_NOTIFY: drawNotify(now); break;
     case SC_OCA_LIST: drawList("Ocarina", ocaNames, OCARINA_SONG_COUNT, ocaSel, ocaScroll); break;
     case SC_OCA_PLAY: drawOcaPlay(now); break;
     case SC_CHEST: drawChest(now); break;
@@ -736,4 +1002,4 @@ void loop() {
   if ((int32_t)(muteToastUntil - now) > 0) drawMuteToast();
   u8g2.sendBuffer();
 }
-#endif  // PINFINDER
+#endif

@@ -19,8 +19,31 @@
 #define HEARTS_COUNT    20                 // máximo 20 (dos filas de 10)
 #define HEARTS_MESSAGE  "¡Corazón lleno de cariño!"
 
-// Tiempo sin tocar nada en el menú antes de que aparezca el hada (ms)
-#define IDLE_TO_FAIRY_MS 60000
+// Tiempo sin tocar nada antes de volver al reloj (ms)
+#define IDLE_TO_CLOCK_MS 60000
+
+// =====================================================================
+//  RELOJ Y RECORDATORIOS
+// =====================================================================
+
+// Zona horaria en formato POSIX. Ejemplos:
+//   Argentina / Uruguay:  "<-03>3"
+//   Chile:                "<-04>4<-03>,M9.1.6/24,M4.1.6/24"
+//   México (CDMX):        "CST6"
+//   Colombia / Perú:      "<-05>5"
+//   España:               "CET-1CEST,M3.5.0,M10.5.0/3"
+#define TIMEZONE        "<-03>3"
+
+// Nombre de la red WiFi que crea el reloj la primera vez para configurarlo
+#define WIFI_SETUP_AP   "Hyrule-Setup"
+
+// Cada cuántos segundos el hada vuelve a llamar si no atendés el aviso,
+// y cuántas veces como máximo.
+#define NOTIFY_REPEAT_S 30
+#define NOTIFY_REPEATS  3
+
+// 1 = jingle suave en cada hora en punto (entre las 9 y las 21)
+#define HOURLY_CHIME    0
 
 // =====================================================================
 //  HARDWARE

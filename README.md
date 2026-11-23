@@ -1,66 +1,66 @@
-# Cofre de Hyrule
+# Reloj de Hyrule
 
-Un regalito para fans de Zelda hecho con una **XIAO ESP32-S3**, una **OLED de 128x64** y un **buzzer pasivo**.
+Reloj de escritorio estilo Zelda con recordatorios que cargás desde el teléfono. Funciona con una **XIAO ESP32-S3**, una **OLED de 128x64** y un **buzzer pasivo**.
 
-- **Arranque:** la Trifuerza se arma en pantalla, destella, suena el jingle de "secreto" y aparece la pantalla de título con el nombre de la persona y la Canción de Zelda.
-- **Ocarina:** 6 canciones. Se ven los botones de la ocarina, que se iluminan mientras suenan, y las notas pasando por un pentagrama.
-- **Abrir el cofre:** el cofre se abre con rayos de luz, sube una rupia, suena la fanfarria y aparece tu mensaje escrito letra por letra.
-- **Corazones:** los contenedores de corazón se llenan uno por uno, cada uno con su sonidito.
-- **Hada:** un hada que revolotea con una estela de brillos y cada tanto grita "¡Hey!". Aparece sola después de 1 minuto sin tocar nada.
+- **Reloj:** hora grande con un sol que cruza el cielo entre nubes de día, y luna y estrellas de noche. Abajo se ven la fecha y el próximo recordatorio 🔔.
+- **Recordatorios desde el teléfono:** el reloj sirve una página web en tu WiFi. Ahí cargás recordatorios para una vez, todos los días o de lunes a viernes, y también podés mandar un mensaje al instante.
+- **Avisos del hada:** cuando toca un recordatorio, el hada aparece gritando "¡Hey! ¡Escucha!" y el mensaje se escribe letra por letra. Si no lo atendés, vuelve a llamar cada 30 s, hasta 3 veces.
+- **Extras del menú:** ocarina con 6 canciones, cofre con mensaje secreto, corazones y el hada como protector de pantalla.
+
+## Usar desde el teléfono
+
+1. **Primera vez, si no tiene WiFi guardado:** desde el teléfono conectate a la red **Hyrule-Setup** y elegí tu WiFi en la página que se abre.
+2. En el reloj, entrá a **Menú → Conexión** y vas a ver la dirección, por ejemplo `http://192.168.100.52`.
+3. Abrí esa dirección en el navegador del teléfono, que tiene que estar en el mismo WiFi. Te conviene agregarla a la pantalla de inicio.
+
+**Atajo:** abrir `http://<ip>/msg?text=Hola` manda el mensaje al instante. Sirve para crear un atajo en iOS (Atajos) o en Android (HTTP Shortcuts).
+
+> La página no tiene contraseña: cualquiera en tu red WiFi puede cargar recordatorios.
+
+## Controles
+
+| Pantalla | Izquierda | OK (medio) | Derecha |
+|---|---|---|---|
+| Reloj | — | abrir menú | ver recordatorios |
+| Listas | subir | elegir | bajar |
+| Aviso del hada | — | leer / cerrar | — |
+
+- **Mantener izquierda:** silenciar o activar el sonido. Se guarda, y en el reloj aparece una ✕ arriba a la derecha.
+- **Mantener OK:** volver al reloj.
+- **Mantener derecha** en *Conexión*: borrar el WiFi guardado y volver a configurarlo.
+- Después de 1 minuto sin tocar nada, vuelve solo al reloj.
 
 ## Conexiones
 
 | Componente | Pin del módulo | XIAO ESP32-S3 |
 |---|---|---|
-| OLED | GND | GND |
-| OLED | VCC | 3V3 |
-| OLED | SCL | **D5** |
-| OLED | SDA | **D4** |
+| OLED | GND / VCC | GND / 3V3 |
+| OLED | SCL / SDA | **D5 / D4** |
 | OLED | RES | sin conectar a GPIO |
-| Buzzer HW-508 | S | **D3** |
-| Buzzer HW-508 | pin del medio | 3V3 |
-| Buzzer HW-508 | − | GND |
-| Botón izquierdo (anterior) | una pata / la otra | **D0** / GND |
-| Botón del medio (OK) | una pata / la otra | **D8** / GND |
-| Botón derecho (siguiente) | una pata / la otra | **D2** / GND |
+| Buzzer HW-508 | S / medio / − | **D3** / 3V3 / GND |
+| Botón izquierdo | entre pin y GND | **D0** |
+| Botón del medio (OK) | entre pin y GND | **D8** |
+| Botón derecho | entre pin y GND | **D2** |
 
-¿Cableaste distinto? Subí el detector (`pio run -e pinfinder -t upload`): encuentra la OLED solo y te dice en qué pin está cada botón. Para el buzzer usá `pio run -e buzztest -t upload`, que muestra en pantalla el pin que está sonando.
-
-Los botones usan las resistencias pull-up internas del ESP32, así que no necesitan resistencias externas. Conectá cada uno entre el pin y GND; si el botón es de 4 patas, usá dos patas en diagonal.
-
-## Controles
-
-- **Izquierda / derecha:** moverse por las listas.
-- **OK:** elegir, abrir el cofre, pasar de página o cortar una canción.
-- **Mantener OK:** volver al menú desde cualquier pantalla.
-- **Mantener izquierda:** silenciar o activar el sonido. Se recuerda aunque desenchufes la placa, y cuando está en silencio aparece una ✕ en el encabezado del menú.
+Si tu cableado es distinto, usá el detector: `pio run -e pinfinder -t upload` encuentra la OLED y los botones. Para el buzzer, `pio run -e buzztest -t upload` muestra en pantalla el pin que está sonando.
 
 ## Personalizar
 
-Todo se cambia en [`include/config.h`](include/config.h):
+En [`include/config.h`](include/config.h) podés cambiar:
 
-- `GIFT_TITLE` y `GIFT_NAME`: el texto de la pantalla de título.
-- `CHEST_MESSAGE`: el mensaje del cofre. Puede ser largo: se pagina solo, y `\n` fuerza un salto de línea.
-- `HEARTS_COUNT` y `HEARTS_MESSAGE`: la cantidad de corazones (máximo 20) y el texto que aparece al llenarlos.
-- `OLED_TYPE`: 1 = SSD1309 (1.54"), 2 = SSD1306 (0.96"), 3 = SH1106 (1.3").
-
-Las canciones están en [`include/songs.h`](include/songs.h). Cada nota es `{nota, duración}`, y agregar una canción nueva es copiar un bloque `SONG(...)`.
+- **`TIMEZONE`:** la zona horaria. Viene configurada para Argentina, y el archivo trae ejemplos de otros países.
+- **`HOURLY_CHIME`:** un jingle en cada hora en punto. Viene apagado.
+- **`NOTIFY_REPEAT_S` / `NOTIFY_REPEATS`:** cada cuánto y cuántas veces insiste el hada.
+- **`GIFT_TITLE`, `GIFT_NAME`, `CHEST_MESSAGE` y `HEARTS_*`:** los textos de la pantalla de inicio y de los extras.
+- **`OLED_TYPE`:** el modelo de pantalla. 1 = SSD1309, 2 = SSD1306, 3 = SH1106.
 
 ## Compilar y subir
 
-Con [PlatformIO](https://platformio.org/):
-
 ```bash
-pio run -t upload
+pio run -e xiao_esp32s3 -t upload
 ```
 
-Si no aparece el puerto, mantené apretado el botón **B** (BOOT) de la XIAO mientras la conectás por USB.
-
-## Problemas comunes
-
-- **La pantalla queda negra:** corré el detector de pines y probá otro `OLED_TYPE`.
-- **El buzzer solo hace "click" o un tono fijo:** puede ser un buzzer activo, y esos no tocan melodías. El HW-508 es pasivo y funciona bien.
-- **Suena muy fuerte:** poné una resistencia de 100–220 Ω en serie con el pin S.
+Si no aparece el puerto, mantené apretado el botón **B** (BOOT) de la XIAO mientras la conectás.
 
 ---
 Proyecto hecho por un fan, sin relación con Nintendo. The Legend of Zelda es una marca de Nintendo.

@@ -51,7 +51,8 @@ class MusicPlayer {
   }
 
   void silence() {
-    noTone(pin_);
+    if (toneOn_) noTone(pin_);
+    toneOn_ = false;
     sounding_ = false;
   }
 
@@ -69,7 +70,10 @@ class MusicPlayer {
     uint32_t now = millis();
     if (muteChanged_) {
       muteChanged_ = false;
-      if (muted_) noTone(pin_);
+      if (muted_ && toneOn_) {
+        noTone(pin_);
+        toneOn_ = false;
+      }
     }
     if (reqFlag_) {
       reqFlag_ = false;
@@ -95,7 +99,10 @@ class MusicPlayer {
     if (n.midi) {
       uint32_t gap = dur > 80 ? 18 : 6;  // pequeño silencio entre notas
       midi_ = n.midi;
-      if (!muted_) tone(pin_, midiToFreq(n.midi));
+      if (!muted_) {
+        tone(pin_, midiToFreq(n.midi));
+        toneOn_ = true;
+      }
       sounding_ = true;
       soundEnd_ = noteEnd_ - gap;
     } else {
@@ -113,6 +120,7 @@ class MusicPlayer {
   uint32_t noteEnd_ = 0, soundEnd_ = 0;
   uint16_t idx_ = 0;
   volatile bool muted_ = false, muteChanged_ = false;
+  bool toneOn_ = false;
   volatile bool sounding_ = false;
   volatile uint8_t midi_ = 0;
 };
