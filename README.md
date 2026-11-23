@@ -33,6 +33,7 @@ Los botones usan las resistencias pull-up internas del ESP32, así que no necesi
 - **Izquierda / derecha:** moverse por las listas.
 - **OK:** elegir, abrir el cofre, pasar de página o cortar una canción.
 - **Mantener OK:** volver al menú desde cualquier pantalla.
+- **Mantener izquierda:** silenciar o activar el sonido. Se recuerda aunque desenchufes la placa, y cuando está en silencio aparece una ✕ en el encabezado del menú.
 
 ## Personalizar
 

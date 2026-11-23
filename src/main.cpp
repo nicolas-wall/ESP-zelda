@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <Preferences.h>
 #include <vector>
 
 #include "config.h"
@@ -171,7 +172,7 @@ static void updateBoot(uint32_t now, uint32_t t) {
     bootChime = true;
     music.play(&SONG_SECRET, &SONG_LULLABY);
   }
-  if (t > BOOT_FLY && (btnOk.shortRel || btnPrev.press || btnNext.press)) enterScene(SC_MENU);
+  if (t > BOOT_FLY && (btnOk.shortRel || btnPrev.shortRel || btnNext.press)) enterScene(SC_MENU);
 }
 
 static void drawBoot(uint32_t now, uint32_t t) {
@@ -210,6 +211,10 @@ static void drawList(const char* title, const char* const* items, int n, int sel
   u8g2.setFont(u8g2_font_6x10_tf);
   drawTriforce(6, 1, 5);
   drawTriforce(121, 1, 5);
+  if (music.muted()) {  // pequeño indicador de silencio en el encabezado
+    u8g2.drawLine(113, 2, 118, 7);
+    u8g2.drawLine(113, 7, 118, 2);
+  }
   centerText(9, title);
   u8g2.drawHLine(0, 12, 128);
   if (sel < scroll) scroll = sel;
@@ -240,7 +245,7 @@ const int MENU_COUNT = 4;
 int menuSel = 0, menuScroll = 0;
 
 static void updateMenu(uint32_t now) {
-  if (btnPrev.press) menuSel = (menuSel + MENU_COUNT - 1) % MENU_COUNT;
+  if (btnPrev.shortRel) menuSel = (menuSel + MENU_COUNT - 1) % MENU_COUNT;
   if (btnNext.press) menuSel = (menuSel + 1) % MENU_COUNT;
   if (btnOk.shortRel) {
     const Scene targets[] = {SC_OCA_LIST, SC_CHEST, SC_HEARTS, SC_FAIRY};
@@ -254,7 +259,7 @@ int ocaSel = 0, ocaScroll = 0;
 uint32_t ocaDoneAt = 0;
 
 static void updateOcaList(uint32_t now) {
-  if (btnPrev.press) ocaSel = (ocaSel + OCARINA_SONG_COUNT - 1) % OCARINA_SONG_COUNT;
+  if (btnPrev.shortRel) ocaSel = (ocaSel + OCARINA_SONG_COUNT - 1) % OCARINA_SONG_COUNT;
   if (btnNext.press) ocaSel = (ocaSel + 1) % OCARINA_SONG_COUNT;
   if (btnOk.shortRel) enterScene(SC_OCA_PLAY);
 }
@@ -550,7 +555,7 @@ int trailX[TRAIL], trailY[TRAIL], trailHead = 0;
 uint32_t heyUntil = 0, nextHey = 0;
 
 static void updateFairy(uint32_t now) {
-  if (btnOk.press || btnPrev.press || btnNext.press) {
+  if (btnOk.press || btnPrev.shortRel || btnNext.press) {
     enterScene(SC_MENU);
     return;
   }
@@ -632,12 +637,41 @@ void enterScene(Scene s) {
   }
 }
 
+// ---------- Silencio (mantener botón izquierdo) ----------
+Preferences prefs;
+uint32_t muteToastUntil = 0;
+
+static void drawSpeaker(int x, int y, bool muted) {
+  u8g2.drawBox(x, y + 3, 3, 4);
+  u8g2.drawTriangle(x + 2, y + 5, x + 7, y, x + 7, y + 10);
+  if (muted) {
+    u8g2.drawLine(x + 10, y + 2, x + 16, y + 8);
+    u8g2.drawLine(x + 10, y + 8, x + 16, y + 2);
+  } else {
+    u8g2.drawCircle(x + 7, y + 5, 4, U8G2_DRAW_UPPER_RIGHT | U8G2_DRAW_LOWER_RIGHT);
+    u8g2.drawCircle(x + 7, y + 5, 7, U8G2_DRAW_UPPER_RIGHT | U8G2_DRAW_LOWER_RIGHT);
+  }
+}
+
+static void drawMuteToast() {
+  const int w = 84, h = 24, x = (128 - w) / 2, y = 20;
+  u8g2.setDrawColor(0);
+  u8g2.drawBox(x, y, w, h);
+  u8g2.setDrawColor(1);
+  u8g2.drawRFrame(x, y, w, h, 3);
+  drawSpeaker(x + 6, y + 7, music.muted());
+  u8g2.setFont(u8g2_font_6x10_tf);
+  u8g2.drawUTF8(x + 28, y + 16, music.muted() ? "Silencio" : "Sonido");
+}
+
 void setup() {
   Serial.begin(115200);
   btnPrev.begin();
   btnOk.begin();
   btnNext.begin();
   music.begin(PIN_BUZZER);
+  prefs.begin("zelda", false);
+  music.setMuted(prefs.getBool("muted", false));
 
   u8g2.setBusClock(400000);
   u8g2.begin();
@@ -667,6 +701,13 @@ void loop() {
     btnOk.shortRel = false;
   }
 
+  // Mantener botón izquierdo = silenciar / activar sonido (se guarda)
+  if (btnPrev.longPress) {
+    music.setMuted(!music.muted());
+    prefs.putBool("muted", music.muted());
+    muteToastUntil = now + 1200;
+  }
+
   uint32_t t = now - sceneStart;
   switch (scene) {
     case SC_BOOT: updateBoot(now, t); break;
@@ -692,6 +733,7 @@ void loop() {
     case SC_HEARTS: drawHearts(now); break;
     case SC_FAIRY: drawFairy(now); break;
   }
+  if ((int32_t)(muteToastUntil - now) > 0) drawMuteToast();
   u8g2.sendBuffer();
 }
 #endif  // PINFINDER

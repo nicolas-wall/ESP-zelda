@@ -25,6 +25,13 @@ class MusicPlayer {
   }
   void stop() { play(nullptr); }
 
+  // Silencio: la música sigue "corriendo" (las animaciones la siguen) pero sin sonar.
+  void setMuted(bool m) {
+    muted_ = m;
+    muteChanged_ = true;
+  }
+  bool muted() const { return muted_; }
+
   bool playing() const { return reqFlag_ || cur_ != nullptr; }
   const Song* song() const { return cur_; }
   uint8_t currentMidi() const { return sounding_ ? midi_ : 0; }
@@ -60,6 +67,10 @@ class MusicPlayer {
 
   void update() {
     uint32_t now = millis();
+    if (muteChanged_) {
+      muteChanged_ = false;
+      if (muted_) noTone(pin_);
+    }
     if (reqFlag_) {
       reqFlag_ = false;
       start(req_, reqNext_, now);
@@ -84,7 +95,7 @@ class MusicPlayer {
     if (n.midi) {
       uint32_t gap = dur > 80 ? 18 : 6;  // pequeño silencio entre notas
       midi_ = n.midi;
-      tone(pin_, midiToFreq(n.midi));
+      if (!muted_) tone(pin_, midiToFreq(n.midi));
       sounding_ = true;
       soundEnd_ = noteEnd_ - gap;
     } else {
@@ -101,6 +112,7 @@ class MusicPlayer {
   volatile uint32_t start_ = 0;
   uint32_t noteEnd_ = 0, soundEnd_ = 0;
   uint16_t idx_ = 0;
+  volatile bool muted_ = false, muteChanged_ = false;
   volatile bool sounding_ = false;
   volatile uint8_t midi_ = 0;
 };
