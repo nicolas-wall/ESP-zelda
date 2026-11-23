@@ -1,7 +1,7 @@
 // Cofre de Hyrule — un regalo para fans de Zelda
 // XIAO ESP32-S3 + OLED 128x64 I2C + buzzer pasivo + 3 botones
 
-#ifndef PINFINDER
+#if !defined(PINFINDER) && !defined(BUZZTEST)
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>

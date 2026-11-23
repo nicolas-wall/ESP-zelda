@@ -36,11 +36,11 @@
 // Pines (nombres de la XIAO ESP32-S3)
 #define PIN_OLED_SDA    D4
 #define PIN_OLED_SCL    D5
-#define PIN_OLED_RES    D3
-#define PIN_BUZZER      D2
+#define PIN_OLED_RES    U8X8_PIN_NONE   // en tu placa RES no va a ningún GPIO
+#define PIN_BUZZER      D3
 #define PIN_BTN_PREV    D0   // botón izquierdo  (anterior)
-#define PIN_BTN_OK      D1   // botón del medio  (OK / mantener = volver)
-#define PIN_BTN_NEXT    D8   // botón derecho    (siguiente)
+#define PIN_BTN_OK      D8   // botón del medio  (OK / mantener = volver)
+#define PIN_BTN_NEXT    D2   // botón derecho    (siguiente)
 
 // 1 = la otra pata de los botones va a GND, 0 = va a 3V3
 #define BTN_TO_GND      1

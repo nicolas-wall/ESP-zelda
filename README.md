@@ -16,13 +16,15 @@ Un regalito para fans de Zelda hecho con una **XIAO ESP32-S3**, una **OLED de 12
 | OLED | VCC | 3V3 |
 | OLED | SCL | **D5** |
 | OLED | SDA | **D4** |
-| OLED | RES | **D3** |
-| Buzzer HW-508 | S | **D2** |
+| OLED | RES | sin conectar a GPIO |
+| Buzzer HW-508 | S | **D3** |
 | Buzzer HW-508 | pin del medio | 3V3 |
 | Buzzer HW-508 | − | GND |
 | Botón izquierdo (anterior) | una pata / la otra | **D0** / GND |
-| Botón del medio (OK) | una pata / la otra | **D1** / GND |
-| Botón derecho (siguiente) | una pata / la otra | **D8** / GND |
+| Botón del medio (OK) | una pata / la otra | **D8** / GND |
+| Botón derecho (siguiente) | una pata / la otra | **D2** / GND |
+
+¿Cableaste distinto? Subí el detector (`pio run -e pinfinder -t upload`): encuentra la OLED solo y te dice en qué pin está cada botón. Para el buzzer usá `pio run -e buzztest -t upload`, que muestra en pantalla el pin que está sonando.
 
 Los botones usan las resistencias pull-up internas del ESP32, así que no necesitan resistencias externas. Conectá cada uno entre el pin y GND; si el botón es de 4 patas, usá dos patas en diagonal.
 
@@ -55,7 +57,7 @@ Si no aparece el puerto, mantené apretado el botón **B** (BOOT) de la XIAO mie
 
 ## Problemas comunes
 
-- **La pantalla queda negra:** revisá que RES esté conectado a D3 y probá otro `OLED_TYPE`.
+- **La pantalla queda negra:** corré el detector de pines y probá otro `OLED_TYPE`.
 - **El buzzer solo hace "click" o un tono fijo:** puede ser un buzzer activo, y esos no tocan melodías. El HW-508 es pasivo y funciona bien.
 - **Suena muy fuerte:** poné una resistencia de 100–220 Ω en serie con el pin S.
 
