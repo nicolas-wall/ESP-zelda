@@ -651,7 +651,7 @@ static void updateNet(uint32_t now) {
     return;
   }
   if (btnOk.shortRel || btnPrev.shortRel || btnNext.shortRel) enterScene(SC_CLOCK);
-  if (btnNext.longPress && now - sceneStart > 1500) netConfirmReset = true;
+  if (btnNext.longPress && (int32_t)(now - sceneStart) > 1500) netConfirmReset = true;
 }
 
 static void drawNet(uint32_t now) {
@@ -1112,8 +1112,10 @@ void loop() {
   // Sin tocar nada por un rato → vuelve al reloj
   bool idleable = scene == SC_MENU || scene == SC_REMINDERS || scene == SC_NET ||
                   scene == SC_OCA_LIST || scene == SC_HEARTS || (scene == SC_CHEST && chestPhase == 0);
-  if (idleable && now - lastInput > IDLE_TO_CLOCK_MS) enterScene(SC_CLOCK);
+  // (resta con signo: enterScene() pudo guardar un millis() posterior a `now`)
+  if (idleable && (int32_t)(now - lastInput) > (int32_t)IDLE_TO_CLOCK_MS) enterScene(SC_CLOCK);
 
+  now = millis();
   st = now - sceneStart;
   u8g2.clearBuffer();
   switch (scene) {
