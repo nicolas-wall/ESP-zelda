@@ -166,6 +166,7 @@ static void handleMsg() {
 
 void netBegin() {
   WiFi.mode(WIFI_STA);
+  wm.setDebugOutput(false);
   wm.setConfigPortalBlocking(false);
   wm.setConnectTimeout(12);
   wm.setTitle("Reloj de Hyrule");
@@ -188,5 +189,12 @@ void netLoop() {
     MDNS.addService("http", "tcp", 80);
   }
   if (serverUp) server.handleClient();
+
+  // Si la hora no llegó, volver a pedirla cada 20 s
+  static uint32_t lastNtpTry = 0;
+  if (serverUp && netConnected() && !timeValid() && millis() - lastNtpTry > 20000) {
+    lastNtpTry = millis();
+    configTzTime(TIMEZONE, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  }
 }
 #endif

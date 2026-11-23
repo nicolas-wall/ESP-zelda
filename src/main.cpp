@@ -1027,6 +1027,9 @@ void enterScene(Scene s) {
 
 void setup() {
   Serial.begin(115200);
+  // Si la placa está enchufada a una PC que no lee el puerto, no esperar
+  // a que se manden los mensajes (si no, todo se pone lento y se pierden botones).
+  Serial.setTxTimeoutMs(0);
   btnPrev.begin();
   btnOk.begin();
   btnNext.begin();
@@ -1062,10 +1065,6 @@ void loop() {
   btnOk.poll(now);
   btnNext.poll(now);
   if (btnPrev.press || btnOk.press || btnNext.press) lastInput = now;
-  // Registro por puerto serie para diagnosticar botones
-  if (btnPrev.press) Serial.printf("[btn] izquierda (pin %d) escena=%d\n", PIN_BTN_PREV, scene);
-  if (btnOk.press) Serial.printf("[btn] OK (pin %d) escena=%d\n", PIN_BTN_OK, scene);
-  if (btnNext.press) Serial.printf("[btn] derecha (pin %d) escena=%d\n", PIN_BTN_NEXT, scene);
 
   // Mantener izquierda = silenciar / activar sonido (se guarda)
   if (btnPrev.longPress) {
