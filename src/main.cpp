@@ -252,16 +252,44 @@ void pushNotification(const String& text) {
   if (pendingNotes.size() < 6) pendingNotes.push_back(text);
 }
 
+// Mayúsculas estilo NES, incluyendo á é í ó ú ñ ü (UTF-8 de 2 bytes 0xC3 xx).
+static String upperUtf8(const String& s) {
+  String o = s;
+  for (unsigned i = 0; i < o.length(); i++) {
+    uint8_t c = o[i];
+    if (c >= 'a' && c <= 'z') o.setCharAt(i, c - 32);
+    else if (c == 0xC3 && i + 1 < o.length()) {
+      uint8_t n = o[i + 1];
+      if (n >= 0xA0 && n <= 0xBE && n != 0xB7) o.setCharAt(i + 1, n - 0x20);
+      i++;
+    }
+  }
+  return o;
+}
+
+uint32_t noteStart = 0;
+int noteLastTyped = 0;
+const uint32_t NOTE_TYPE_DELAY = 700;
+
 static void startNextNotification(uint32_t now) {
-  noteBox.set(pendingNotes.front(), 116, 4);
+  noteBox.set(upperUtf8(pendingNotes.front()), 124, 3);
   pendingNotes.erase(pendingNotes.begin());
   noteChimes = 1;
   noteChimeAt = now + NOTIFY_REPEAT_S * 1000UL;
+  noteStart = now;
+  noteLastTyped = 0;
   music.play(&SONG_HEY);
 }
 
 static void updateNotify(uint32_t now) {
-  noteBox.tick(now);
+  if (now - noteStart > NOTE_TYPE_DELAY) {
+    noteBox.tick(now);
+    // "blip" cada dos letras mientras escribe, como en el NES
+    if (noteBox.typed != noteLastTyped) {
+      if (noteBox.typed > noteLastTyped && noteBox.typed % 2 == 0) music.play(&SONG_BLIP);
+      noteLastTyped = noteBox.typed;
+    }
+  }
   if (noteChimes < NOTIFY_REPEATS && (int32_t)(now - noteChimeAt) >= 0) {
     noteChimes++;
     noteChimeAt = now + NOTIFY_REPEAT_S * 1000UL;
@@ -277,18 +305,40 @@ static void updateNotify(uint32_t now) {
   }
 }
 
+static void drawSpriteMirror(int x, int y, const char* const* rows, int h) {
+  for (int r = 0; r < h; r++) {
+    int w = strlen(rows[r]);
+    for (int c = 0; c < w; c++)
+      if (rows[r][c] == '#') u8g2.drawPixel(x + w - 1 - c, y + r);
+  }
+}
+
+// Escena de la cueva: el mensaje arriba, el sabio entre dos fuegos y la espada.
 static void drawNotify(uint32_t now) {
-  float s = now / 1000.0f;
-  drawFairyAt(10 + (int)(3 * sinf(s * 2.1f)), 7 + (int)(2 * sinf(s * 3.3f)), now);
-  u8g2.setFont(u8g2_font_6x10_tf);
-  u8g2.drawUTF8(24, 10, "¡Hey! ¡Escucha!");
+  noteBox.draw(2, 9, 10, now);
+
+  bool f = (now / 140) % 2;
+  if (f) {
+    drawSprite(22, 35, SPR_FLAME, 11);
+    drawSpriteMirror(97, 35, SPR_FLAME, 11);
+  } else {
+    drawSpriteMirror(22, 35, SPR_FLAME, 11);
+    drawSprite(97, 35, SPR_FLAME, 11);
+  }
+  // el sabio aparece después de un instante
+  if (now - noteStart > 250) drawSprite(58, 32, SPR_SAGE, 16);
+  if (now - noteStart > 450) {
+    drawSprite(62, 52, SPR_SWORD, 10);
+    int s = ((now - noteStart) / 120) % 8;
+    drawSparkle(70, 53, s < 3 ? s + 1 : 0);
+    drawSparkle(58, 59, s >= 4 && s < 7 ? s - 3 : 0);
+  }
   if (!pendingNotes.empty()) {
     char more[8];
     snprintf(more, sizeof(more), "+%d", (int)pendingNotes.size());
-    u8g2.drawStr(127 - u8g2.getStrWidth(more), 10, more);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    u8g2.drawStr(0, 63, more);
   }
-  u8g2.drawRFrame(1, 15, 126, 49, 3);
-  noteBox.draw(6, 27, 11, now);
 }
 
 // ---------- Reloj de Hyrule ----------

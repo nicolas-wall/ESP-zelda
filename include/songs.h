@@ -90,6 +90,9 @@ SONG(SONG_OPEN, "Abrir", 60, "",
 SONG(SONG_HEART, "Corazón", 40, "",
   {a5,1},{e6,2})
 
+SONG(SONG_BLIP, "Blip", 14, "",
+  {e6,1})
+
 SONG(SONG_HEY, "Hey", 70, "",
   {d6,1},{r,1},{a5,1},{d6,2})
 
