@@ -244,7 +244,6 @@ static bool localTime(tm& t) { return timeValid() && getLocalTime(&t, 0); }
 // ---------- Notificaciones (las manda un recordatorio o el teléfono) ----------
 std::vector<String> pendingNotes;
 TypeBox noteBox;
-int rupees = 0;  // se ganan atendiendo avisos (se guardan)
 uint32_t noteChimeAt = 0;
 int noteChimes = 0;
 
@@ -296,9 +295,6 @@ static void updateNotify(uint32_t now) {
     music.play(&SONG_HEY);
   }
   if (btnOk.shortRel && noteBox.ok()) {
-    // Atender un aviso da una rupia
-    rupees = min(rupees + 1, 999);
-    prefs.putUShort("rupees", rupees);
     music.play(&SONG_HEART);
     if (!pendingNotes.empty()) startNextNotification(now);
     else enterScene(SC_CLOCK);
@@ -354,9 +350,6 @@ static const char* const SPR_BELL[] = {
   "#######",
   "...#...",
 };
-static const char* const SPR_RUPEE_S[] = {
-  "..#..", ".###.", "#.#.#", "#.#.#", "#.#.#", "#.#.#", ".###.", "..#..",
-};
 static const int NIGHT_STARS[][2] = {{8, 19}, {14, 33}, {7, 43}, {119, 18}, {113, 30}, {120, 42}};
 int lastChimeHour = -1;
 uint32_t fairyFlyStart = 0;
@@ -388,18 +381,6 @@ static void drawMoonSmall(int x, int y) {
   u8g2.setDrawColor(1);
 }
 
-// Corazón: 0 vacío, 1 medio, 2 lleno
-static void drawHeart(int x, int y, int fill) {
-  drawSprite(x, y, SPR_HEART_EMPTY, 8);
-  if (fill == 2) {
-    drawSprite(x, y, SPR_HEART, 8);
-  } else if (fill == 1) {
-    for (int r = 0; r < 8; r++)
-      for (int c = 0; c <= 4; c++)
-        if (SPR_HEART[r][c] == '#') u8g2.drawPixel(x + c, y + r);
-  }
-}
-
 static void updateClock(uint32_t now) {
   // Cualquier botón abre el menú
   if (btnOk.shortRel || btnNext.shortRel || btnPrev.shortRel) enterScene(SC_MENU);
@@ -429,16 +410,16 @@ static void drawClock(uint32_t now) {
     return;
   }
 
-  // HUD superior: la vida del día se vacía a medida que pasan las horas
-  // (10 corazones = 24 h, cada medio corazón ~72 min) + contador de rupias.
-  int minsLeft = 1440 - (t.tm_hour * 60 + t.tm_min);
-  int halves = (minsLeft + 71) / 72;
-  for (int i = 0; i < 10; i++) drawHeart(i * 10, 0, constrain(halves - 2 * i, 0, 2));
-  drawSprite(103, 0, SPR_RUPEE_S, 8);
-  char rs[4];
-  snprintf(rs, sizeof(rs), "%03d", rupees);
-  u8g2.setFont(u8g2_font_5x7_tf);
-  u8g2.drawStr(110, 7, rs);
+  // Encabezado: el momento del día entre dos Trifuerzas, con una línea ornamental
+  u8g2.setFont(u8g2_font_6x10_tf);
+  const char* phase = dayPhase(t.tm_hour);
+  int pw = u8g2.getUTF8Width(phase);
+  int px = (128 - pw) / 2;
+  u8g2.drawUTF8(px, 9, phase);
+  drawTriforce(px - 9, 1, 4);
+  drawTriforce(px + pw + 8, 1, 4);
+  u8g2.drawHLine(2, 5, px - 16);
+  u8g2.drawHLine(px + pw + 16, 5, 126 - (px + pw + 16));
 
   // Marco doble, como las cajas de diálogo
   u8g2.drawRFrame(0, 11, 128, 40, 4);
@@ -461,26 +442,24 @@ static void drawClock(uint32_t now) {
   const int* tip = TIPS[t.tm_sec % 3];
   drawSparkle(tip[0], tip[1], 2);
 
-  // Abajo: sol/luna + momento del día (alterna con la fecha) y próximo aviso
+  // Abajo: sol/luna + fecha; a la derecha la campanita si hay recordatorios
   if (day) drawSunSmall(4, 58, now);
   else drawMoonSmall(4, 58);
   u8g2.setFont(u8g2_font_6x10_tf);
   char date[24];
   snprintf(date, sizeof(date), "%s %d %s", DAYS[t.tm_wday], t.tm_mday, MONTHS[t.tm_mon]);
-  u8g2.drawUTF8(11, 63, (t.tm_sec / 5) % 2 ? date : dayPhase(t.tm_hour));
+  u8g2.drawUTF8(11, 63, date);
 
   int idx[MAX_REMINDERS];
   if (reminders.sorted(t, idx) > 0) {
-    const Reminder& r = reminders.items[idx[0]];
-    char hm[8];
-    snprintf(hm, sizeof(hm), "%02d:%02d", r.hour, r.minute);
-    int w = u8g2.getStrWidth(hm);
-    u8g2.drawStr(128 - w, 63, hm);
-    drawSprite(128 - w - 9, 55, SPR_BELL, 7);
+    // titila si falta poco (10 min o menos)
+    int mins = reminders.minutesUntil(reminders.items[idx[0]], t);
+    bool soon = mins >= 0 && mins <= 10;
+    if (!soon || (now / 400) % 2) drawSprite(120, 55, SPR_BELL, 7);
   }
   if (music.muted()) {
-    u8g2.drawLine(78, 56, 82, 60);
-    u8g2.drawLine(78, 60, 82, 56);
+    u8g2.drawLine(108, 56, 112, 60);
+    u8g2.drawLine(108, 60, 112, 56);
   }
 
   // Cada tanto un hada cruza la pantalla dejando brillos
@@ -993,7 +972,6 @@ void setup() {
   music.begin(PIN_BUZZER);
   prefs.begin("zelda", false);
   music.setMuted(prefs.getBool("muted", false));
-  rupees = prefs.getUShort("rupees", 0);
   reminders.begin();
 
   u8g2.setBusClock(400000);
