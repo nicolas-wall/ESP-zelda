@@ -2,9 +2,9 @@
 
 Reloj de escritorio estilo Zelda con recordatorios que cargás desde el teléfono. Funciona con una **XIAO ESP32-S3**, una **OLED de 128x64** y un **buzzer pasivo**.
 
-- **Reloj:** arriba, el momento del día ("Mañana", "Atardecer", "Noche") entre dos Trifuerzas. En el centro, la hora dentro de un marco, con una Trifuerza como separador y estrellas de noche. Abajo, la fecha con un sol o una luna, y una campanita 🔔 si hay recordatorios, que titila cuando falta poco. Cada 3 minutos un hada cruza la pantalla.
+- **Reloj:** arriba, el momento del día ("Mañana", "Atardecer", "Noche") entre dos Trifuerzas. En el centro, la hora dentro de un marco, con estrellas de noche. Abajo, la fecha con un sol o una luna, y una campanita 🔔 fija si hay recordatorios. Cada 3 minutos un hada cruza la pantalla.
 - **Recordatorios desde el teléfono:** el reloj sirve una página web en tu WiFi. Ahí cargás recordatorios para una vez, todos los días o de lunes a viernes, y también podés mandar un mensaje al instante.
-- **Avisos en la cueva:** cuando toca un recordatorio aparece un sabio entre dos fuegos, con una espada, y el mensaje se escribe en mayúsculas letra por letra. Si no lo atendés, vuelve a llamar cada 30 s, hasta 3 veces.
+- **Avisos en la cueva:** cuando toca un recordatorio aparece un sabio entre dos fuegos y el mensaje se escribe centrado, en mayúsculas, letra por letra. Si no lo atendés, vuelve a llamar cada 30 s, hasta 3 veces.
 - **Extras del menú:** ocarina con 6 canciones, cofre con mensaje secreto, corazones y el hada como protector de pantalla.
 
 ## Usar desde el teléfono
@@ -51,7 +51,7 @@ Si tu cableado es distinto, usá el detector: `pio run -e pinfinder -t upload` e
 En [`include/config.h`](include/config.h) podés cambiar:
 
 - **`TIMEZONE`:** la zona horaria. Viene configurada para Argentina, y el archivo trae ejemplos de otros países.
-- **`HOURLY_CHIME`:** un jingle en cada hora en punto. Viene apagado.
+- **`HYRULE_HOURLY`:** el tema de Hyrule en cada hora en punto, entre `HYRULE_HOURLY_FROM` y `HYRULE_HOURLY_TO`. Viene apagado. También se puede tocar cuando quieras desde la página, con el botón **♪ Tocar el tema de Hyrule**.
 - **`NOTIFY_REPEAT_S` / `NOTIFY_REPEATS`:** cada cuánto y cuántas veces insiste el hada.
 - **`CHEST_MESSAGE` y `HEARTS_*`:** los textos del cofre y de los corazones del menú.
 - **`OLED_TYPE`:** el modelo de pantalla. 1 = SSD1309, 2 = SSD1306, 3 = SH1106.
